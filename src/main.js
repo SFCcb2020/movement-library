@@ -63,12 +63,37 @@ window.claude = {
         },
       };
     }
-    // "sample" (Claude-powered auto-build) has no equivalent here yet -- the
-    // app already treats a null sample capability as "feature unavailable"
-    // and degrades gracefully (see getSample()'s call sites). Wiring this up
-    // for real would mean adding your own Anthropic API key server-side
-    // (never in frontend code) -- worth doing later if you want the
-    // auto-build feature back, not required for the app to work.
+    if (name === "sample") {
+      // Claude-powered Auto-Build. Real Anthropic calls happen server-side,
+      // in api/auto-build.js -- this just forwards the prompt there with
+      // your current sign-in token attached, so the endpoint can confirm a
+      // real coach session before it spends any API credit. Returns null
+      // (feature unavailable, same as before) if you're not signed in --
+      // app.js already handles that case gracefully.
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) return null;
+      const token = data.session.access_token;
+      return {
+        async json(prompt) {
+          const res = await fetch("/api/auto-build", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: "Bearer " + token,
+            },
+            body: JSON.stringify({ prompt }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            const err = new Error(body.error || "Auto-build request failed.");
+            err.code = res.status;
+            err.text = body.error;
+            throw err;
+          }
+          return body;
+        },
+      };
+    }
     return null;
   },
 };
