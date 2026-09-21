@@ -285,6 +285,13 @@ watchAuthState((session) => {
   // re-run it so the UI actually reflects the change without a manual
   // refresh.
   if (window.resolveOwnerStatus) window.resolveOwnerStatus();
+  // Same idea for custom exercises / clients: app.js loads those once at
+  // startup, and if there was no session yet at that exact moment (e.g.
+  // she'd just signed out and signed back in with a new code, with no full
+  // page reload in between) it shows a "preview, won't be saved" warning
+  // and never retries on its own. Nudge it to try again on every session
+  // change -- it's a no-op if it already succeeded.
+  if (session && window.retryDbInit) window.retryDbInit();
 });
 
 // Supabase turns a magic-link redirect into a real signed-in session
