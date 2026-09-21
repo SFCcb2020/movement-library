@@ -203,15 +203,38 @@ function mountPasswordSetter() {
       return;
     }
     btn.disabled = true;
-    status.textContent = "Saving...";
+    btn.textContent = "Saving...";
+    status.textContent = "";
+    status.style.color = "var(--ink-dim)";
     try {
       await setCoachPassword(pw);
-      status.textContent = "Saved! Use this code to sign in from now on.";
-      setTimeout(() => { overlay.hidden = true; }, 1800);
+      status.style.color = "#1a7a3c";
+      status.textContent = "✓ Saved. That's your new access code from now on.";
+      btn.textContent = "Saved ✓";
+      // Leave the confirmation up long enough to actually notice, then close
+      // and reset the form so it's ready fresh next time.
+      setTimeout(() => {
+        overlay.hidden = true;
+        document.getElementById("newPasswordInput").value = "";
+        document.getElementById("confirmPasswordInput").value = "";
+        status.textContent = "";
+        btn.textContent = "Save";
+        btn.disabled = false;
+      }, 2600);
     } catch (e) {
       console.error("[setCoachPassword]", e);
-      status.textContent = "Couldn't save that -- check your connection and try again.";
-    } finally {
+      // Supabase's own wording for "you typed the same code you already
+      // have" -- worth calling out specifically, since otherwise it just
+      // looks like saving silently failed and invites retrying forever.
+      const isSamePassword =
+        (e && e.code === "same_password") ||
+        (e && typeof e.message === "string" && e.message.toLowerCase().includes("different from the old password"));
+      if (isSamePassword) {
+        status.textContent = "That's already your current code -- nothing to change. Pick a different one, or just close this.";
+      } else {
+        status.textContent = "Couldn't save that -- check your connection and try again.";
+      }
+      btn.textContent = "Save";
       btn.disabled = false;
     }
   });
