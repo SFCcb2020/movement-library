@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Movement Library</title>
+<meta name="description" content="Coaching dashboard, exercise library, and client portal for Strong Friends Club.">
+
+<!-- PWA: makes the app installable to a phone's home screen -->
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#141a17">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Movement Library">
+
+<link rel="stylesheet" href="/src/styles/app.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Work+Sans:wght@400;500;600&display=swap">
+</head>
+<body>
+
+<div class="wrap">
+  <h1>Movement Library</h1>
+
+  <div id="gateLoading" class="gateloading" hidden>Loading…</div>
+
+  <div id="gateScreen" class="gatescreen" hidden>
+    <div class="gatecard">
+      <h2>Client Access</h2>
+      <p>Enter the access code your coach gave you to see your program, rehab plan, goals and tasks.</p>
+      <input type="text" class="gatecode" id="gateCodeInput" placeholder="ABC123" maxlength="8" autocomplete="off">
+      <button class="gatesubmit" id="gateSubmitBtn" type="button">Log In</button>
+      <div class="gateerror" id="gateError"></div>
+    </div>
+  </div>
+
+  <div id="clientModeView" class="clientmodeview" hidden></div>
+
+  <div id="coachApp">
+  <p class="sub" id="pagesub">Pick a muscle group or training quality, then narrow by sub-region, plane of movement, or pattern — the exercises and their details fill in as you go.</p>
+
+  <div class="tabbar">
+    <button class="tabbtn active" id="tabbtn-library" type="button">Movement Library</button>
+    <button class="tabbtn" id="tabbtn-builder" type="button">Program Builder</button>
+    <button class="tabbtn" id="tabbtn-rehab" type="button">Rehab</button>
+    <button class="tabbtn" id="tabbtn-nutrition" type="button">Nutrition</button>
+    <button class="tabbtn" id="tabbtn-clients" type="button">Clients</button>
+  </div>
+
+  <div class="tabpanel active" id="tabpanel-library">
+    <div id="dbnoteLibrary" class="dbnote" hidden></div>
+    <div class="searchrow">
+      <label class="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="q" type="text" placeholder="Search by exercise or muscle name…" autocomplete="off">
+      </label>
+      <button class="addexercisebtn" id="addExerciseBtn" type="button">+ Add Exercise</button>
+      <button class="clearbtn" id="clearAll">Clear all filters</button>
+    </div>
+
+    <div id="addExercisePanel"></div>
+
+    <div class="facets" id="facets"></div>
+    <div class="activebar" id="activebar"></div>
+    <div class="status" id="status"></div>
+    <div id="results"></div>
+  </div>
+
+  <div class="tabpanel" id="tabpanel-builder">
+    <div id="dbnote" class="dbnote" hidden></div>
+    <div class="builder-layout">
+      <div class="proglist">
+        <h2>Your Programs</h2>
+        <button class="newprogbtn" id="newProgramBtn" type="button">+ New Program</button>
+        <button class="autobuildbtn" id="autoBuildBtn" type="button">✨ Auto-Build Program</button>
+        <div id="programListEl"></div>
+      </div>
+      <div id="editorHost"></div>
+    </div>
+  </div>
+
+  <div class="tabpanel" id="tabpanel-rehab">
+    <div id="dbnoteRehab" class="dbnote" hidden></div>
+    <div class="builder-layout">
+      <div class="proglist">
+        <h2>Rehab Cases</h2>
+        <button class="newprogbtn" id="newCaseBtn" type="button">+ New Case</button>
+        <div id="caseListEl"></div>
+      </div>
+      <div id="rehabHost"></div>
+    </div>
+  </div>
+
+  <div class="tabpanel" id="tabpanel-nutrition">
+    <div id="dbnoteNutrition" class="dbnote" hidden></div>
+    <div class="builder-layout">
+      <div class="proglist">
+        <h2>Nutrition Plans</h2>
+        <button class="newprogbtn" id="newNutritionBtn" type="button">+ New Plan</button>
+        <div id="nutritionListEl"></div>
+      </div>
+      <div id="nutritionHost"></div>
+    </div>
+  </div>
+
+  <div class="tabpanel" id="tabpanel-clients">
+    <div id="dbnoteClients" class="dbnote" hidden></div>
+    <div class="builder-layout">
+      <div class="proglist">
+        <h2>Clients</h2>
+        <button class="newprogbtn" id="newClientBtn" type="button">+ New Client</button>
+        <div id="clientListEl"></div>
+      </div>
+      <div id="clientHost"></div>
+    </div>
+  </div>
+
+  </div>
+
+  <footer>318 exercises · Strong Friends Club programming reference</footer>
+</div>
+
+<div id="printArea"></div>
+
+<!--
+  Load order matters here and is NOT interchangeable:
+  main.js is a module script, so per spec it's deferred automatically.
+  app.js is given an explicit `defer` so it joins that SAME deferred queue
+  instead of running immediately -- deferred scripts then run in document
+  order, so main.js (which synchronously sets window.claude and
+  window.__clientPortal) is guaranteed to finish before app.js's first line
+  runs. Without that `defer` on app.js, it would execute the instant the
+  parser reaches it (classic scripts are not deferred by default), racing
+  ahead of main.js and finding window.claude undefined.
+
+  app.js lives in /public (not /src) and is referenced as a plain root path
+  on purpose: Vite refuses to bundle a non-module <script src> at all (it
+  won't even copy the file into the production build), so anything in
+  /public is instead copied to the site's root completely untouched -- the
+  one way to ship this file as the classic, non-module script it is.
+-->
+<script type="module" src="/src/main.js"></script>
+<script defer src="/app.js"></script>
+
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/sw.js").catch(() => {
+        /* offline install just won't work this session -- not fatal */
+      });
+    });
+  }
+</script>
+
+</body>
+</html>
