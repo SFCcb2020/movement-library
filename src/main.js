@@ -152,11 +152,16 @@ watchAuthState((session) => {
   if (window.resolveOwnerStatus) window.resolveOwnerStatus();
 });
 
-// Supabase puts auth tokens in the URL hash after a magic-link redirect;
-// clean it up once the session's been picked up so a reload doesn't re-parse
-// a stale hash.
-if (window.location.hash.includes("access_token")) {
+// Supabase turns a magic-link redirect into a real signed-in session
+// automatically, the moment the client library above initializes -- either
+// the PKCE flow's `?code=...` in the query string (see supabaseClient.js
+// for why that's the one actually in use now), or the older implicit
+// flow's `#access_token=...` in the hash, in case an already-sent email
+// still has an old-style link in it. All that's left to do here is clean
+// the address bar up afterward, so a page reload doesn't try to re-process
+// a stale code or token that's already been used.
+if (window.location.search.includes("code=") || window.location.hash.includes("access_token")) {
   supabase.auth.getSession().then(() => {
-    history.replaceState(null, "", window.location.pathname + window.location.search);
+    history.replaceState(null, "", window.location.pathname);
   });
 }
