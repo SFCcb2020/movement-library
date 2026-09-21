@@ -31,8 +31,6 @@ import {
   clearSavedAccessCode,
 } from "./clientPortal.js";
 
-let currentSession = null; // the coach's Supabase Auth session, or null
-
 window.__clientPortal = {
   loginWithAccessCode,
   saveClientPatch,
@@ -46,11 +44,24 @@ window.__clientPortal = {
 window.claude = {
   async use(name) {
     if (name === "db") {
-      return currentSession ? createDbShim(currentSession.user.id) : null;
+      // Deliberately asks Supabase directly (not the `currentSession`
+      // variable below) every time this is called. On a fresh page load,
+      // watchAuthState's very first check is still an in-flight promise
+      // when app.js's own startup code calls this a moment later --
+      // reading `currentSession` here would catch it before that promise
+      // resolves and wrongly conclude "not signed in" even when a valid
+      // session is sitting in local storage. supabase.auth.getSession()
+      // waits for the client's own startup to finish before answering, so
+      // it's never caught mid-flight the way a plain variable can be.
+      const { data } = await supabase.auth.getSession();
+      return data.session ? createDbShim(data.session.user.id) : null;
     }
     if (name === "user") {
       return {
-        isOwner: async () => !!currentSession,
+        isOwner: async () => {
+          const { data } = await supabase.auth.getSession();
+          return !!data.session;
+        },
       };
     }
     // "sample" (Claude-powered auto-build) has no equivalent here yet -- the
@@ -268,7 +279,6 @@ function mountCoachSignOut() {
 
 // ---------------------------------------------------------------- boot
 watchAuthState((session) => {
-  currentSession = session;
   mountCoachLoginUI();
   if (session) {
     mountCoachSignOut();
