@@ -71,35 +71,48 @@ export default async function handler(req, res) {
   }
 
   try {
-    const model = "gemini-2.5-flash";
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseMimeType: "application/json",
-          },
-        }),
-      }
-    );
+    // Google keeps renaming/retiring model IDs (a fresh API key got a 404 on
+    // "gemini-2.5-flash" -- it's been retired for new keys even though older
+    // keys can still use it). Rather than hardcode one name and risk this
+    // breaking again the next time Google renames something, try a short
+    // list of current candidates in order and only move to the next one on
+    // a 404 (model not found) -- any other error (bad key, rate limit, etc)
+    // stops immediately, since retrying with a different model wouldn't fix
+    // those anyway.
+    const modelCandidates = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-3.6-flash", "gemini-2.5-flash-lite"];
+    let geminiRes;
+    let lastErrText = "";
+    for (const model of modelCandidates) {
+      geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              responseMimeType: "application/json",
+            },
+          }),
+        }
+      );
+      if (geminiRes.ok) break;
+      lastErrText = await geminiRes.text();
+      console.error("[auto-build] Gemini API error for model", model, geminiRes.status, lastErrText);
+      if (geminiRes.status !== 404) break; // only keep trying candidates on "model not found"
+    }
 
     if (!geminiRes.ok) {
-      const errText = await geminiRes.text();
-      console.error("[auto-build] Gemini API error", geminiRes.status, errText);
       if (geminiRes.status === 429) {
         res.status(429).json({ error: "Hit the free-tier rate limit for a moment -- wait a bit and try again." });
         return;
       }
       // Pass the real upstream status code through (instead of always
       // collapsing to 502) so it shows up in the app's "(nnn)" error message
-      // -- e.g. 404 means the model name Gemini was asked for doesn't exist
-      // (usually because Google renamed/retired it), 400/403 usually means
-      // the API key itself is invalid, restricted, or unauthorized. That
-      // number is the single fastest way to diagnose this without needing
-      // access to the server's own logs.
+      // -- e.g. 404 means none of the model names above exist for this key,
+      // 400/403 usually means the API key itself is invalid, restricted, or
+      // unauthorized. That number is the single fastest way to diagnose this
+      // without needing access to the server's own logs.
       const passthroughStatus = geminiRes.status >= 400 && geminiRes.status < 600 ? geminiRes.status : 502;
       res.status(passthroughStatus).json({
         error: "The AI service returned an error (upstream status " + geminiRes.status + "). Try again in a moment.",
