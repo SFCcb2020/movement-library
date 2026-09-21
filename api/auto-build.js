@@ -115,15 +115,20 @@ export default async function handler(req, res) {
         res.status(429).json({ error: "Hit the free-tier rate limit for a moment -- wait a bit and try again." });
         return;
       }
-      // Pass the real upstream status code through (instead of always
-      // collapsing to 502) so it shows up in the app's "(nnn)" error message
-      // -- e.g. 404 means none of the model names above exist for this key,
-      // 400/403 usually means the API key itself is invalid, restricted, or
-      // unauthorized. That number is the single fastest way to diagnose this
-      // without needing access to the server's own logs.
+      // Pass the real upstream status code AND Google's own explanation text
+      // through (instead of a generic message) so it's visible in the app's
+      // error popup without needing access to the server's own logs -- the
+      // status number alone wasn't enough to diagnose this one.
       const passthroughStatus = geminiRes.status >= 400 && geminiRes.status < 600 ? geminiRes.status : 502;
+      let detail = "";
+      try {
+        const parsedErr = JSON.parse(lastErrText);
+        detail = (parsedErr && parsedErr.error && parsedErr.error.message) || "";
+      } catch (e) {
+        detail = (lastErrText || "").slice(0, 200);
+      }
       res.status(passthroughStatus).json({
-        error: "The AI service returned an error (upstream status " + geminiRes.status + "). Try again in a moment.",
+        error: "Gemini error " + geminiRes.status + (detail ? ": " + detail.slice(0, 220) : " (no detail returned)."),
       });
       return;
     }
