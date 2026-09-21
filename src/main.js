@@ -43,15 +43,6 @@ window.__clientPortal = {
 window.claude = {
   async use(name) {
     if (name === "db") {
-      // Deliberately asks Supabase directly (not the `currentSession`
-      // variable below) every time this is called. On a fresh page load,
-      // watchAuthState's very first check is still an in-flight promise
-      // when app.js's own startup code calls this a moment later --
-      // reading `currentSession` here would catch it before that promise
-      // resolves and wrongly conclude "not signed in" even when a valid
-      // session is sitting in local storage. supabase.auth.getSession()
-      // waits for the client's own startup to finish before answering, so
-      // it's never caught mid-flight the way a plain variable can be.
       const { data } = await supabase.auth.getSession();
       return data.session ? createDbShim(data.session.user.id) : null;
     }
@@ -64,12 +55,6 @@ window.claude = {
       };
     }
     if (name === "sample") {
-      // Claude-powered Auto-Build. Real Anthropic calls happen server-side,
-      // in api/auto-build.js -- this just forwards the prompt there with
-      // your current sign-in token attached, so the endpoint can confirm a
-      // real coach session before it spends any API credit. Returns null
-      // (feature unavailable, same as before) if you're not signed in --
-      // app.js already handles that case gracefully.
       const { data } = await supabase.auth.getSession();
       if (!data.session) return null;
       const token = data.session.access_token;
@@ -86,7 +71,13 @@ window.claude = {
           const body = await res.json().catch(() => ({}));
           if (!res.ok) {
             const err = new Error(body.error || "Auto-build request failed.");
-            err.code = res.status;
+            // Packs the real explanation into `code` itself -- app.js's own
+            // error popup only ever displays "(" + err.code + ")" and, due
+            // to a pre-existing quirk in that code, silently drops `text`
+            // whenever it's present. Folding the detail into `code` is the
+            // only way to get it on screen without editing that large,
+            // otherwise-untouched file.
+            err.code = res.status + (body.error ? ": " + body.error : "");
             err.text = body.error;
             throw err;
           }
@@ -98,15 +89,6 @@ window.claude = {
   },
 };
 
-// ---------------------------------------------------------------- coach login UI
-// The published Artifact had no visible "coach sign in" step at all --
-// isOwner() was answered by the Claude platform itself. A real app needs an
-// actual login. This mirrors the client access-code card right above it on
-// the same screen: one input, one button, no email, no link to wait on.
-// Under the hood it's still a real Supabase sign-in (see coachAuth.js) --
-// the "access code" IS the account's password, just presented the same way
-// a client's access code is. If this code is ever lost, ask Claude to reset
-// it directly in the database (no separate self-serve reset flow exists).
 function mountCoachLoginUI() {
   const gateCard = document.querySelector("#gateScreen .gatecard");
   if (!gateCard || document.getElementById("coachLoginToggle")) return;
@@ -161,9 +143,6 @@ function mountCoachLoginUI() {
   });
 }
 
-// Lets you change your own access code any time, right from inside the
-// app -- no need to ask Claude unless you're locked out and can't sign in
-// at all.
 function mountPasswordSetter() {
   const tabbar = document.querySelector(".tabbar");
   if (!tabbar || document.getElementById("coachSetPasswordToggle")) return;
@@ -188,11 +167,6 @@ function mountPasswordSetter() {
 
   const overlay = document.createElement("div");
   overlay.id = "coachSetPasswordOverlay";
-  // Deliberately controlled with overlay.style.display (below), never the
-  // `hidden` attribute -- an inline `display` value always overrides the
-  // browser's built-in `[hidden] { display: none }` rule, so mixing the two
-  // (as this used to) means toggling `hidden` silently does nothing and the
-  // box either never closes or, on some loads, is visible from the start.
   overlay.style.cssText =
     "position:fixed;inset:0;background:rgba(0,0,0,0.4);display:none;align-items:center;justify-content:center;z-index:1000;";
   overlay.innerHTML = `
@@ -240,8 +214,6 @@ function mountPasswordSetter() {
       status.style.color = "#1a7a3c";
       status.textContent = "✓ Saved. That's your new access code from now on.";
       btn.textContent = "Saved ✓";
-      // Leave the confirmation up long enough to actually notice, then close
-      // and reset the form so it's ready fresh next time.
       setTimeout(() => {
         overlay.style.display = "none";
         document.getElementById("newPasswordInput").value = "";
@@ -252,9 +224,6 @@ function mountPasswordSetter() {
       }, 2600);
     } catch (e) {
       console.error("[setCoachPassword]", e);
-      // Supabase's own wording for "you typed the same code you already
-      // have" -- worth calling out specifically, since otherwise it just
-      // looks like saving silently failed and invites retrying forever.
       const isSamePassword =
         (e && e.code === "same_password") ||
         (e && typeof e.message === "string" && e.message.toLowerCase().includes("different from the old password"));
@@ -269,9 +238,6 @@ function mountPasswordSetter() {
   });
 }
 
-// Adds a real "Sign out" control for the coach, alongside the existing
-// app's own client-facing "Log out" button (#cmLogoutBtn, which only logs
-// out of the CLIENT preview inside her dashboard -- a different thing).
 function mountCoachSignOut() {
   const tabbar = document.querySelector(".tabbar");
   if (!tabbar || document.getElementById("coachSignOutBtn")) return;
@@ -291,42 +257,21 @@ function mountCoachSignOut() {
   btn.style.color = "var(--ink-dim)";
   btn.addEventListener("click", async () => {
     await signOutCoach();
-    window.location.reload(); // simplest correct way back to a clean gate state
+    window.location.reload();
   });
   tabbar.appendChild(btn);
 }
 
-// ---------------------------------------------------------------- boot
 watchAuthState((session) => {
   mountCoachLoginUI();
   if (session) {
     mountCoachSignOut();
     mountPasswordSetter();
   }
-  // app.js's own resolveOwnerStatus() (called at the bottom of app.js, once
-  // it has loaded) re-checks window.claude.use("user").isOwner() and shows
-  // the right screen. If a session change happens AFTER app.js already
-  // resolved once (e.g. the magic-link redirect lands, or she signs out),
-  // re-run it so the UI actually reflects the change without a manual
-  // refresh.
   if (window.resolveOwnerStatus) window.resolveOwnerStatus();
-  // Same idea for custom exercises / clients: app.js loads those once at
-  // startup, and if there was no session yet at that exact moment (e.g.
-  // she'd just signed out and signed back in with a new code, with no full
-  // page reload in between) it shows a "preview, won't be saved" warning
-  // and never retries on its own. Nudge it to try again on every session
-  // change -- it's a no-op if it already succeeded.
   if (session && window.retryDbInit) window.retryDbInit();
 });
 
-// Supabase turns a magic-link redirect into a real signed-in session
-// automatically, the moment the client library above initializes -- either
-// the PKCE flow's `?code=...` in the query string (see supabaseClient.js
-// for why that's the one actually in use now), or the older implicit
-// flow's `#access_token=...` in the hash, in case an already-sent email
-// still has an old-style link in it. All that's left to do here is clean
-// the address bar up afterward, so a page reload doesn't try to re-process
-// a stale code or token that's already been used.
 if (window.location.search.includes("code=") || window.location.hash.includes("access_token")) {
   supabase.auth.getSession().then(() => {
     history.replaceState(null, "", window.location.pathname);
