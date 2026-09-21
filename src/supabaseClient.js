@@ -23,4 +23,20 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    // PKCE instead of the default "implicit" flow. This is what makes the
+    // coach's magic-link sign-in immune to an email app's automatic
+    // "safety" pre-fetch of the link (Gmail, Outlook, and most phone mail
+    // apps quietly open links the instant an email arrives, to scan them --
+    // with the implicit flow, that alone burns the one-time link before a
+    // real click ever happens). With PKCE, finishing sign-in needs a secret
+    // this same browser stashed in its own storage at the moment "Send
+    // sign-in link" was clicked -- a prefetch from Google's or Microsoft's
+    // servers has no way to produce that secret, so it can't consume the
+    // link. See src/main.js for the other half of this (cleaning up the
+    // URL once the session lands). One consequence worth knowing: the link
+    // has to be opened on the same device/browser it was requested from.
+    flowType: "pkce",
+  },
+});
