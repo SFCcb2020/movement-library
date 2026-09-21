@@ -76,7 +76,8 @@ export default async function handler(req, res) {
     // keys can still use it). Rather than hardcode one name and risk this
     // breaking again the next time Google renames something, try a short
     // list of current candidates in order and only move to the next one on
-    // a 404 (model not found) -- any other error (bad key, rate limit, etc)
+    // a 404 (model not found) or 503 (that model temporarily overloaded on
+    // Google's end) -- any other error (bad key, real rate limit, etc)
     // stops immediately, since retrying with a different model wouldn't fix
     // those anyway.
     const modelCandidates = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-3.6-flash", "gemini-2.5-flash-lite"];
@@ -99,7 +100,14 @@ export default async function handler(req, res) {
       if (geminiRes.ok) break;
       lastErrText = await geminiRes.text();
       console.error("[auto-build] Gemini API error for model", model, geminiRes.status, lastErrText);
-      if (geminiRes.status !== 404) break; // only keep trying candidates on "model not found"
+      // Keep trying the next candidate only for "this specific model isn't
+      // usable right now" cases -- 404 (model name doesn't exist for this
+      // key) or 503 (that model is temporarily overloaded on Google's end,
+      // common for their newest/most in-demand models). Anything else (a
+      // bad key, a real rate limit, a malformed request) would fail the
+      // same way for every model, so stop immediately instead of wasting
+      // four calls to find that out.
+      if (geminiRes.status !== 404 && geminiRes.status !== 503) break;
     }
 
     if (!geminiRes.ok) {
