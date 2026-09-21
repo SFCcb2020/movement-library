@@ -163,9 +163,13 @@ function mountPasswordSetter() {
 
   const overlay = document.createElement("div");
   overlay.id = "coachSetPasswordOverlay";
-  overlay.hidden = true;
+  // Deliberately controlled with overlay.style.display (below), never the
+  // `hidden` attribute -- an inline `display` value always overrides the
+  // browser's built-in `[hidden] { display: none }` rule, so mixing the two
+  // (as this used to) means toggling `hidden` silently does nothing and the
+  // box either never closes or, on some loads, is visible from the start.
   overlay.style.cssText =
-    "position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;";
+    "position:fixed;inset:0;background:rgba(0,0,0,0.4);display:none;align-items:center;justify-content:center;z-index:1000;";
   overlay.innerHTML = `
     <div style="background:var(--surface);border-radius:12px;padding:22px;width:min(340px,90vw);box-sizing:border-box;">
       <h3 style="margin:0 0 6px;font-size:16px;">Change your access code</h3>
@@ -184,10 +188,10 @@ function mountPasswordSetter() {
   document.body.appendChild(overlay);
 
   toggle.addEventListener("click", () => {
-    overlay.hidden = false;
+    overlay.style.display = "flex";
   });
   document.getElementById("cancelSetPasswordBtn").addEventListener("click", () => {
-    overlay.hidden = true;
+    overlay.style.display = "none";
   });
   document.getElementById("saveSetPasswordBtn").addEventListener("click", async () => {
     const pw = document.getElementById("newPasswordInput").value;
@@ -214,7 +218,7 @@ function mountPasswordSetter() {
       // Leave the confirmation up long enough to actually notice, then close
       // and reset the form so it's ready fresh next time.
       setTimeout(() => {
-        overlay.hidden = true;
+        overlay.style.display = "none";
         document.getElementById("newPasswordInput").value = "";
         document.getElementById("confirmPasswordInput").value = "";
         status.textContent = "";
