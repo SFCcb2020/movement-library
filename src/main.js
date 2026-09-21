@@ -15,10 +15,9 @@
 import { supabase } from "./supabaseClient.js";
 import { createDbShim } from "./firestoreShim.js";
 import {
-  sendCoachMagicLink,
   watchAuthState,
   signOutCoach,
-  signInWithPassword,
+  signInWithAccessCode,
   setCoachPassword,
 } from "./coachAuth.js";
 import {
@@ -77,9 +76,12 @@ window.claude = {
 // ---------------------------------------------------------------- coach login UI
 // The published Artifact had no visible "coach sign in" step at all --
 // isOwner() was answered by the Claude platform itself. A real app needs an
-// actual login, so this adds a small, unobtrusive toggle to the existing
-// access-code gate screen: "Coach? Sign in" reveals an email field, and
-// clicking Send emails a magic sign-in link (no password to set or forget).
+// actual login. This mirrors the client access-code card right above it on
+// the same screen: one input, one button, no email, no link to wait on.
+// Under the hood it's still a real Supabase sign-in (see coachAuth.js) --
+// the "access code" IS the account's password, just presented the same way
+// a client's access code is. If this code is ever lost, ask Claude to reset
+// it directly in the database (no separate self-serve reset flow exists).
 function mountCoachLoginUI() {
   const gateCard = document.querySelector("#gateScreen .gatecard");
   if (!gateCard || document.getElementById("coachLoginToggle")) return;
@@ -90,22 +92,13 @@ function mountCoachLoginUI() {
   wrap.style.borderTop = "1px solid var(--line)";
   wrap.innerHTML = `
     <button type="button" id="coachLoginToggle" style="background:none;border:none;color:var(--ink-dim);font-family:inherit;font-size:12.5px;cursor:pointer;text-decoration:underline;">
-      Coach? Sign in
+      Coach? Sign in here
     </button>
     <div id="coachLoginForm" hidden style="margin-top:12px;">
-      <input type="email" id="coachEmailInput" placeholder="you@example.com" autocomplete="email"
-        style="font-family:inherit;font-size:14px;border:1px solid var(--line);border-radius:8px;padding:9px 12px;width:100%;box-sizing:border-box;background:var(--bg);color:var(--ink);margin-bottom:8px;">
-      <button type="button" id="coachSendLinkBtn" class="gatesubmit" style="width:100%;">Send sign-in link</button>
+      <input type="password" id="coachCodeInput" class="gatecode" placeholder="Access code" maxlength="16" autocomplete="current-password"
+        style="margin-bottom:8px;">
+      <button type="button" id="coachPasswordSubmitBtn" class="gatesubmit" style="width:100%;">Sign in</button>
       <div id="coachLoginStatus" style="font-size:12.5px;color:var(--ink-dim);margin-top:8px;"></div>
-
-      <button type="button" id="coachPasswordToggle" style="background:none;border:none;color:var(--ink-dim);font-family:inherit;font-size:12px;cursor:pointer;text-decoration:underline;margin-top:10px;padding:0;">
-        Have a password? Sign in directly
-      </button>
-      <div id="coachPasswordForm" hidden style="margin-top:10px;">
-        <input type="password" id="coachPasswordInput" placeholder="Password" autocomplete="current-password"
-          style="font-family:inherit;font-size:14px;border:1px solid var(--line);border-radius:8px;padding:9px 12px;width:100%;box-sizing:border-box;background:var(--bg);color:var(--ink);margin-bottom:8px;">
-        <button type="button" id="coachPasswordSubmitBtn" class="gatesubmit" style="width:100%;">Sign in</button>
-      </div>
     </div>
   `;
   gateCard.appendChild(wrap);
@@ -113,65 +106,39 @@ function mountCoachLoginUI() {
   document.getElementById("coachLoginToggle").addEventListener("click", () => {
     document.getElementById("coachLoginForm").hidden = false;
     document.getElementById("coachLoginToggle").hidden = true;
+    document.getElementById("coachCodeInput").focus();
   });
 
-  document.getElementById("coachSendLinkBtn").addEventListener("click", async () => {
-    const email = document.getElementById("coachEmailInput").value;
-    const status = document.getElementById("coachLoginStatus");
-    const btn = document.getElementById("coachSendLinkBtn");
-    if (!email || !email.includes("@")) {
-      status.textContent = "Enter a valid email address.";
-      return;
-    }
-    btn.disabled = true;
-    status.textContent = "Sending...";
-    try {
-      await sendCoachMagicLink(email);
-      status.textContent = "Check your email for a sign-in link.";
-    } catch (e) {
-      console.error("[coachLogin]", e);
-      status.textContent = "Couldn't send the link -- check your connection and try again.";
-    } finally {
-      btn.disabled = false;
-    }
-  });
-
-  document.getElementById("coachPasswordToggle").addEventListener("click", () => {
-    document.getElementById("coachPasswordForm").hidden = false;
-    document.getElementById("coachPasswordToggle").hidden = true;
-  });
-
-  document.getElementById("coachPasswordSubmitBtn").addEventListener("click", async () => {
-    const email = document.getElementById("coachEmailInput").value;
-    const password = document.getElementById("coachPasswordInput").value;
+  async function submitCode() {
+    const code = document.getElementById("coachCodeInput").value;
     const status = document.getElementById("coachLoginStatus");
     const btn = document.getElementById("coachPasswordSubmitBtn");
-    if (!email || !email.includes("@")) {
-      status.textContent = "Enter your email above too.";
-      return;
-    }
-    if (!password) {
-      status.textContent = "Enter your password.";
+    if (!code) {
+      status.textContent = "Enter your access code.";
       return;
     }
     btn.disabled = true;
     status.textContent = "Signing in...";
     try {
-      await signInWithPassword(email, password);
+      await signInWithAccessCode(code);
       status.textContent = "";
     } catch (e) {
-      console.error("[coachLogin] password sign-in failed", e);
-      status.textContent = "Incorrect email or password -- or you haven't set one yet (sign in with a link once, then use \"Set a password\" next to Sign out).";
+      console.error("[coachLogin] sign-in failed", e);
+      status.textContent = "That code didn't work -- double check it, or ask Claude to reset it.";
     } finally {
       btn.disabled = false;
     }
+  }
+
+  document.getElementById("coachPasswordSubmitBtn").addEventListener("click", submitCode);
+  document.getElementById("coachCodeInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submitCode();
   });
 }
 
-// A one-time (or change-anytime) step, only visible once already signed in:
-// sign in with a magic link, set a password here, and every sign-in after
-// that can use the password form on the gate screen above instead of
-// waiting on another email.
+// Lets you change your own access code any time, right from inside the
+// app -- no need to ask Claude unless you're locked out and can't sign in
+// at all.
 function mountPasswordSetter() {
   const tabbar = document.querySelector(".tabbar");
   if (!tabbar || document.getElementById("coachSetPasswordToggle")) return;
@@ -179,7 +146,7 @@ function mountPasswordSetter() {
   const toggle = document.createElement("button");
   toggle.id = "coachSetPasswordToggle";
   toggle.type = "button";
-  toggle.textContent = "Set a password";
+  toggle.textContent = "Change access code";
   toggle.style.marginLeft = "8px";
   toggle.style.alignSelf = "center";
   toggle.style.background = "none";
@@ -201,11 +168,11 @@ function mountPasswordSetter() {
     "position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;";
   overlay.innerHTML = `
     <div style="background:var(--surface);border-radius:12px;padding:22px;width:min(340px,90vw);box-sizing:border-box;">
-      <h3 style="margin:0 0 6px;font-size:16px;">Set a sign-in password</h3>
-      <p style="margin:0 0 14px;font-size:12.5px;color:var(--ink-dim);">You'll still be able to use a sign-in link any time -- this just adds a faster option for you.</p>
-      <input type="password" id="newPasswordInput" placeholder="New password" autocomplete="new-password"
+      <h3 style="margin:0 0 6px;font-size:16px;">Change your access code</h3>
+      <p style="margin:0 0 14px;font-size:12.5px;color:var(--ink-dim);">This replaces your current code. Use something you'll remember -- there's no email reset for this yet, so if you forget it you'll need to ask Claude to reset it.</p>
+      <input type="password" id="newPasswordInput" placeholder="New access code" autocomplete="new-password"
         style="font-family:inherit;font-size:14px;border:1px solid var(--line);border-radius:8px;padding:9px 12px;width:100%;box-sizing:border-box;background:var(--bg);color:var(--ink);margin-bottom:8px;">
-      <input type="password" id="confirmPasswordInput" placeholder="Confirm password" autocomplete="new-password"
+      <input type="password" id="confirmPasswordInput" placeholder="Confirm new access code" autocomplete="new-password"
         style="font-family:inherit;font-size:14px;border:1px solid var(--line);border-radius:8px;padding:9px 12px;width:100%;box-sizing:border-box;background:var(--bg);color:var(--ink);margin-bottom:8px;">
       <div id="setPasswordStatus" style="font-size:12.5px;color:var(--ink-dim);margin-bottom:10px;"></div>
       <div style="display:flex;gap:8px;">
@@ -239,7 +206,7 @@ function mountPasswordSetter() {
     status.textContent = "Saving...";
     try {
       await setCoachPassword(pw);
-      status.textContent = "Saved! You can use this password to sign in from now on.";
+      status.textContent = "Saved! Use this code to sign in from now on.";
       setTimeout(() => { overlay.hidden = true; }, 1800);
     } catch (e) {
       console.error("[setCoachPassword]", e);
