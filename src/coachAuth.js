@@ -18,6 +18,29 @@ export async function sendCoachMagicLink(email) {
   if (error) throw error;
 }
 
+// A second, optional way in, alongside the magic link -- useful once you're
+// switching back and forth (e.g. testing a client's view) and don't want to
+// wait on an email each time. No password exists until you set one (see
+// setCoachPassword below), so this will simply fail with "invalid login
+// credentials" until then -- that's expected, not a bug.
+export async function signInWithPassword(email, password) {
+  const { error } = await supabase.auth.signInWithPassword({
+    email: (email || "").trim(),
+    password: password || "",
+  });
+  if (error) throw error;
+}
+
+// Sets (or changes) the password on the CURRENTLY SIGNED IN account. You
+// have to already be signed in (e.g. via a magic link) to call this once --
+// after that, signInWithPassword above works going forward. This never
+// leaves your browser -- it's a direct call to your own Supabase project,
+// the same as everything else here.
+export async function setCoachPassword(password) {
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) throw error;
+}
+
 export async function getCurrentSession() {
   const { data, error } = await supabase.auth.getSession();
   if (error) {
