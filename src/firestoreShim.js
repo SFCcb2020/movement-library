@@ -187,11 +187,16 @@ function makeCollectionRef(config, coachId, orderRules) {
   };
 }
 
-// The app orders by application-level field names ("name", "createdAt");
-// "createdAt" maps to the real `created_at` column since that's a normal
-// column here rather than something we'd need to pull out of jsonb.
+// The app orders by application-level field names ("name", "createdAt",
+// "updatedAt"); each maps to the real snake_case column since those are
+// normal columns here rather than something to pull out of jsonb. Missing
+// "updatedAt" here was the bug behind "Couldn't load your saved programs
+// (42703)" and the matching rehab/nutrition errors -- 42703 is Postgres for
+// "that column doesn't exist," because the literal string "updatedAt" was
+// being sent straight through instead of the real column, `updated_at`.
 function mapOrderField(field) {
   if (field === "createdAt") return "created_at";
+  if (field === "updatedAt") return "updated_at";
   if (field === "name") return "name";
   return field;
 }
