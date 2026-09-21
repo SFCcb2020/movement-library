@@ -71,16 +71,18 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Google keeps renaming/retiring model IDs (a fresh API key got a 404 on
-    // "gemini-2.5-flash" -- it's been retired for new keys even though older
-    // keys can still use it). Rather than hardcode one name and risk this
-    // breaking again the next time Google renames something, try a short
-    // list of current candidates in order and only move to the next one on
-    // a 404 (model not found) or 503 (that model temporarily overloaded on
-    // Google's end) -- any other error (bad key, real rate limit, etc)
-    // stops immediately, since retrying with a different model wouldn't fix
-    // those anyway.
-    const modelCandidates = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-3.6-flash", "gemini-2.5-flash-lite"];
+    // Google confirmed (via a real error message from this exact key) that
+    // the whole "gemini-2.5-*" family is retired for newer accounts, and
+    // recommended "gemini-3.5-flash-lite" instead. Rather than hardcode any
+    // single name and risk this breaking AGAIN next time Google renames
+    // something, "gemini-flash-latest" is Google's own always-current alias
+    // -- it stays pointed at whatever their current recommended Flash model
+    // is, so it's listed first. The rest are concrete fallbacks in case that
+    // alias is ever unavailable; only moves to the next candidate on a 404
+    // (model not found/retired) or 503 (temporarily overloaded) -- any other
+    // error (bad key, real rate limit, etc) stops immediately, since
+    // retrying with a different model wouldn't fix those anyway.
+    const modelCandidates = ["gemini-flash-latest", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.1-flash-lite"];
     let geminiRes;
     let lastErrText = "";
     for (const model of modelCandidates) {
