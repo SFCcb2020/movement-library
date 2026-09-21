@@ -1,13 +1,32 @@
 // Vercel serverless function (auto-detected from the /api folder -- no extra
 // config needed). This is the ONE place your Gemini API key is allowed to
 // live: as a Vercel "Environment Variable" named GEMINI_API_KEY, read here
-// on the server, never shipped to the browser.
+// on the server, never shipped to the browser. If it were in any file under
+// src/ or public/ instead, it would end up inside the JS bundle that anyone
+// visiting the site can view -- and from there, anyone could run up your
+// (free-tier) usage or, worse, use it themselves. This function is the only
+// thing standing between the button in the app and your key.
+//
+// Uses Google's Gemini API (a free tier, no credit card needed, via
+// aistudio.google.com) rather than a paid one, since Auto-Build here is
+// low-volume enough that the free tier comfortably covers it.
+//
+// Called by src/main.js's window.claude.use("sample") shim, which is what
+// app.js's Auto-Build feature was already written against (see
+// runAutoBuild() in app.js) -- this endpoint's job is just to BE that
+// capability for real, so nothing in app.js needed to change.
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
     return;
   }
 
+  // Require a real, currently-valid Supabase sign-in before spending any API
+  // quota -- otherwise anyone who finds the URL could call this directly
+  // (bypassing the app's UI entirely). This only checks "is this a genuine
+  // signed-in session", the same as any of the app's other coach-only
+  // actions -- it doesn't need to know WHICH account, since only your own
+  // coach sign-in can ever produce a valid one.
   const authHeader = req.headers.authorization || "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
   if (!token) {
@@ -43,6 +62,8 @@ export default async function handler(req, res) {
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
+    // The exact situation before this key is added in Vercel -- a clear
+    // message instead of a generic crash.
     res.status(500).json({
       error: "Auto-build isn't set up yet -- add a GEMINI_API_KEY environment variable in Vercel and redeploy.",
     });
@@ -72,7 +93,17 @@ export default async function handler(req, res) {
         res.status(429).json({ error: "Hit the free-tier rate limit for a moment -- wait a bit and try again." });
         return;
       }
-      res.status(502).json({ error: "The AI service returned an error. Try again in a moment." });
+      // Pass the real upstream status code through (instead of always
+      // collapsing to 502) so it shows up in the app's "(nnn)" error message
+      // -- e.g. 404 means the model name Gemini was asked for doesn't exist
+      // (usually because Google renamed/retired it), 400/403 usually means
+      // the API key itself is invalid, restricted, or unauthorized. That
+      // number is the single fastest way to diagnose this without needing
+      // access to the server's own logs.
+      const passthroughStatus = geminiRes.status >= 400 && geminiRes.status < 600 ? geminiRes.status : 502;
+      res.status(passthroughStatus).json({
+        error: "The AI service returned an error (upstream status " + geminiRes.status + "). Try again in a moment.",
+      });
       return;
     }
 
