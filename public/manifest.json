@@ -1,6 +1,6 @@
 {
-  "name": "Movement Library -- Strong Friends Club",
-  "short_name": "Movement Library",
+  "name": "Strong Friends Club",
+  "short_name": "Strong Friends",
   "description": "Coaching dashboard, exercise library, and client portal for Strong Friends Club.",
   "start_url": "/",
   "scope": "/",
