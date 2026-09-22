@@ -451,6 +451,34 @@ footer{margin-top:34px; text-align:center; color:var(--ink-dim); font-size:12.5p
 .cmempty{color:var(--ink-dim); font-size:13.5px; padding:14px 0;}
 .cmempty.weeklygoalinvite{color:var(--ink); font-weight:600; padding:8px 0 4px;}
 
+/* Client portal's top-level collapsible "pill" blocks (Personal Stats,
+   Big Picture Goals, The Road Map, Nutrition) -- styled like a bigger,
+   card-ified version of the existing .taskpresets chevron-toggle pattern.
+   .cmnestedpill is the smaller/flatter variant used for pills nested
+   inside another pill (Today's Agenda / Training Plan / Rehab inside The
+   Road Map). */
+.cmpill{background:var(--surface); border:1px solid var(--line); border-radius:12px; margin-bottom:16px; padding:0 18px;}
+.cmpill > summary{cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between; gap:10px; font-family:"Oswald",sans-serif; font-size:15px; text-transform:uppercase; letter-spacing:.03em; color:var(--ink); padding:16px 0;}
+.cmpill > summary::-webkit-details-marker{display:none;}
+.cmpill > summary::after{content:"▸"; font-size:13px; color:var(--ink-dim); flex:none;}
+.cmpill[open] > summary::after{content:"▾";}
+.cmpill > summary:hover{color:var(--accent);}
+.cmpillbody{padding:0 0 18px;}
+.cmpill.cmnestedpill{background:var(--surface-2); margin-bottom:12px; padding:0 14px;}
+.cmpill.cmnestedpill > summary{font-size:12.5px; padding:12px 0;}
+.cmpill.cmnestedpill .cmpillbody{padding:0 0 14px;}
+
+/* One training day as its own small pill, shared between the Training
+   Plan pill and (when scheduled for today) Today's Agenda. */
+.cmdaypill{background:var(--surface); border:1px solid var(--line); border-radius:8px; margin-top:10px; padding:0 14px;}
+.cmdaypill summary{cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; font-size:13.5px; font-weight:600; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.03em;}
+.cmdaypill summary::-webkit-details-marker{display:none;}
+.cmdaypill summary::before{content:"▸ "; font-size:11px;}
+.cmdaypill[open] summary::before{content:"▾ ";}
+.cmdaypill:hover summary{color:var(--ink);}
+.cmdaypillsched{background:var(--accent-soft); color:var(--accent); font-size:10.5px; font-weight:700; text-transform:none; letter-spacing:0; border-radius:999px; padding:2px 9px; white-space:nowrap;}
+.cmdaypill .cmpillbody{padding:0 0 12px;}
+
 .accesscodebox{display:flex; align-items:center; gap:10px; flex-wrap:wrap; background:var(--surface-2); border-radius:8px; padding:10px 14px; margin:2px 0 6px;}
 .accesscodeval{font-family:inherit; font-size:17px; font-weight:700; letter-spacing:.1em; color:var(--accent);}
 .accesscopybtn, .accessregenbtn{border:1px solid var(--line); background:var(--surface); color:var(--ink-dim); border-radius:999px; padding:4px 12px; font-family:inherit; font-size:11.5px; cursor:pointer;}
