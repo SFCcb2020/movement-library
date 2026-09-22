@@ -32,6 +32,7 @@ import {
   markCoachMessagesReadForCode,
   getSavedAccessCode,
   clearSavedAccessCode,
+  submitEnquiry,
 } from "./clientPortal.js";
 
 window.__clientPortal = {
@@ -46,6 +47,7 @@ window.__clientPortal = {
   markCoachMessagesReadForCode,
   getSavedAccessCode,
   clearSavedAccessCode,
+  submitEnquiry,
 };
 
 window.claude = {
@@ -108,6 +110,35 @@ window.claude = {
         },
       };
     }
+    if (name === "resendAccessCode") {
+      // Manual "resend the access code email" button on a client's profile
+      // -- the safety net for whenever the automatic email from a Stripe
+      // signup doesn't land. Same pattern as "sample" above: forwards the
+      // current sign-in token to api/resend-access-code.js, which does the
+      // actual sending server-side (that's where RESEND_API_KEY lives).
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) return null;
+      const token = data.session.access_token;
+      return {
+        async call(clientId) {
+          const res = await fetch("/api/resend-access-code", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: "Bearer " + token,
+            },
+            body: JSON.stringify({ clientId }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            const err = new Error(body.error || "Couldn't resend that email.");
+            err.code = res.status + (body.error ? ": " + body.error : "");
+            throw err;
+          }
+          return body;
+        },
+      };
+    }
     return null;
   },
 };
@@ -115,38 +146,23 @@ window.claude = {
 // ---------------------------------------------------------------- coach login UI
 // The published Artifact had no visible "coach sign in" step at all --
 // isOwner() was answered by the Claude platform itself. A real app needs an
-// actual login. This mirrors the client access-code card right above it on
-// the same screen: one input, one button, no email, no link to wait on.
-// Under the hood it's still a real Supabase sign-in (see coachAuth.js) --
-// the "access code" IS the account's password, just presented the same way
-// a client's access code is. If this code is ever lost, ask Claude to reset
-// it directly in the database (no separate self-serve reset flow exists).
+// actual login. Under the hood it's still a real Supabase sign-in (see
+// coachAuth.js) -- the "access code" IS the account's password, just
+// presented the same way a client's access code is. If this code is ever
+// lost, ask Claude to reset it directly in the database (no separate
+// self-serve reset flow exists).
+//
+// The form itself (#coachCodeInput etc.) is now static markup in index.html
+// -- one of the four launch-screen panels (Sign In / Join / Enquire / Coach
+// Sign In), shown and hidden by app.js's launch-screen nav -- so this just
+// wires up its submit behavior. It used to build that markup itself and
+// inject it into the client access-code card; now that Coach Sign In is its
+// own peer entry point rather than a hidden toggle under the client card,
+// there's no DOM left to build here.
 function mountCoachLoginUI() {
-  const gateCard = document.querySelector("#gateScreen .gatecard");
-  if (!gateCard || document.getElementById("coachLoginToggle")) return;
-
-  const wrap = document.createElement("div");
-  wrap.style.marginTop = "18px";
-  wrap.style.paddingTop = "16px";
-  wrap.style.borderTop = "1px solid var(--line)";
-  wrap.innerHTML = `
-    <button type="button" id="coachLoginToggle" style="background:none;border:none;color:var(--ink-dim);font-family:inherit;font-size:12.5px;cursor:pointer;text-decoration:underline;">
-      Coach? Sign in here
-    </button>
-    <div id="coachLoginForm" hidden style="margin-top:12px;">
-      <input type="password" id="coachCodeInput" class="gatecode" placeholder="Access code" maxlength="16" autocomplete="current-password"
-        style="margin-bottom:8px;">
-      <button type="button" id="coachPasswordSubmitBtn" class="gatesubmit" style="width:100%;">Sign in</button>
-      <div id="coachLoginStatus" style="font-size:12.5px;color:var(--ink-dim);margin-top:8px;"></div>
-    </div>
-  `;
-  gateCard.appendChild(wrap);
-
-  document.getElementById("coachLoginToggle").addEventListener("click", () => {
-    document.getElementById("coachLoginForm").hidden = false;
-    document.getElementById("coachLoginToggle").hidden = true;
-    document.getElementById("coachCodeInput").focus();
-  });
+  const submitBtn = document.getElementById("coachPasswordSubmitBtn");
+  if (!submitBtn || submitBtn.dataset.wired) return;
+  submitBtn.dataset.wired = "1";
 
   async function submitCode() {
     const code = document.getElementById("coachCodeInput").value;
