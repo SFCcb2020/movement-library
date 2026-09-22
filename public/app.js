@@ -2399,6 +2399,10 @@ function scheduleClientSave(client){
       // buildClientProgramCard) -- purely a display preference, never
       // touches the coach's actual prescription.
       suggestWeightFromPrevious: !!client.suggestWeightFromPrevious,
+      // What the client is allowed to see under The Road Map (see
+      // renderClientProfile's "Client View Access" toggles and the gating in
+      // renderClientModeView) -- defaults to everything on.
+      visibility: client.visibility || {training: true, rehab: true, nutrition: true},
       updatedAt: new Date().toISOString(),
     };
     try{
@@ -5232,6 +5236,11 @@ function renderClientModeView(){
   if(!client.agendaNotes){ client.agendaNotes = {}; needsCmSave = true; }
   if(!client.trainingSchedule){ client.trainingSchedule = {}; needsCmSave = true; }
   if(!client.weightLog){ client.weightLog = []; needsCmSave = true; }
+  // What this client can see under The Road Map -- set on their profile by
+  // the coach (see renderClientProfile). Defaults to everything on so a
+  // client from before this feature existed doesn't suddenly lose access to
+  // something they could already see.
+  if(!client.visibility){ client.visibility = {training: true, rehab: true, nutrition: true}; needsCmSave = true; }
   if(needsCmSave) scheduleClientSave(client);
 
   try{
@@ -5241,9 +5250,18 @@ function renderClientModeView(){
   header.innerHTML = `<h2>Welcome, ${esc(client.name || "there")}</h2><span class="savebadge" id="cmSaveStatus"></span><button class="cmlogout" id="cmLogoutBtn" type="button">Log out</button>`;
   host.appendChild(header);
 
-  const myPrograms = programsCache.filter(p => programHasClient(p, client.id));
-  const myCases = casesCache.filter(c => c.clientId === client.id);
-  const myNutrition = nutritionCache.filter(n => n.clientId === client.id);
+  const trainingOn = client.visibility.training !== false;
+  const rehabOn = client.visibility.rehab !== false;
+  const nutritionOn = client.visibility.nutrition !== false;
+  // Filtered down to nothing the instant a toggle is off, rather than just
+  // hiding the section that lists them below -- this is what stops a
+  // program the coach already scheduled onto a specific day from still
+  // sneaking into Today's Agenda / the Full Week View further down while
+  // Training Program is toggled off (scheduledDayFor only ever looks inside
+  // whichever list it's handed).
+  const myPrograms = trainingOn ? programsCache.filter(p => programHasClient(p, client.id)) : [];
+  const myCases = rehabOn ? casesCache.filter(c => c.clientId === client.id) : [];
+  const myNutrition = nutritionOn ? nutritionCache.filter(n => n.clientId === client.id) : [];
 
   // Personal Stats -- body metrics, weight tracker, and lifting stats, all
   // editable right from this one pill.
@@ -5292,16 +5310,21 @@ function renderClientModeView(){
       }, "cmnestedpill"));
     }, "cmnestedpill"));
 
-    body.appendChild(buildCmPill("Training Plan", () => cmTrainingPlanOpen, v => { cmTrainingPlanOpen = v; }, planBody => {
-      if(!myPrograms.length){
-        const p = document.createElement("div");
-        p.className = "cmempty";
-        p.textContent = "No program has been assigned yet — check back soon.";
-        planBody.appendChild(p);
-      } else {
-        myPrograms.forEach(p => planBody.appendChild(buildClientProgramCard(p, client)));
-      }
-    }, "cmnestedpill"));
+    // Each of these three is gated on its own visibility toggle -- when off,
+    // the whole pill is left out entirely rather than shown empty, so there's
+    // nothing here even hinting the section exists.
+    if(trainingOn){
+      body.appendChild(buildCmPill("Training Plan", () => cmTrainingPlanOpen, v => { cmTrainingPlanOpen = v; }, planBody => {
+        if(!myPrograms.length){
+          const p = document.createElement("div");
+          p.className = "cmempty";
+          p.textContent = "No program has been assigned yet — check back soon.";
+          planBody.appendChild(p);
+        } else {
+          myPrograms.forEach(p => planBody.appendChild(buildClientProgramCard(p, client)));
+        }
+      }, "cmnestedpill"));
+    }
 
     if(myCases.length){
       body.appendChild(buildCmPill("Rehab", () => cmRehabOpen, v => { cmRehabOpen = v; }, rehabBody => {
@@ -5311,16 +5334,18 @@ function renderClientModeView(){
 
     // Nutrition -- the client's own preferences, plus whatever plan the
     // coach has put together for them.
-    body.appendChild(buildCmPill("Nutrition", () => cmNutritionOpen, v => { cmNutritionOpen = v; }, nutritionBody => {
-      nutritionBody.appendChild(buildClientNutritionPrefs(client));
-      if(myNutrition.length){
-        const planLabel = document.createElement("div");
-        planLabel.className = "field-label";
-        planLabel.textContent = "My Nutrition Plan";
-        nutritionBody.appendChild(planLabel);
-        myNutrition.forEach(n => nutritionBody.appendChild(buildClientNutritionCard(n)));
-      }
-    }, "cmnestedpill"));
+    if(nutritionOn){
+      body.appendChild(buildCmPill("Nutrition", () => cmNutritionOpen, v => { cmNutritionOpen = v; }, nutritionBody => {
+        nutritionBody.appendChild(buildClientNutritionPrefs(client));
+        if(myNutrition.length){
+          const planLabel = document.createElement("div");
+          planLabel.className = "field-label";
+          planLabel.textContent = "My Nutrition Plan";
+          nutritionBody.appendChild(planLabel);
+          myNutrition.forEach(n => nutritionBody.appendChild(buildClientNutritionCard(n)));
+        }
+      }, "cmnestedpill"));
+    }
   }));
 
   // Messages -- a direct line to the coach, right in the app. No unread
@@ -5370,6 +5395,9 @@ function renderClientProfile(){
   if(!client.agendaNotes){ client.agendaNotes = {}; needsSave = true; }
   if(!client.trainingSchedule){ client.trainingSchedule = {}; needsSave = true; }
   if(!client.weightLog){ client.weightLog = []; needsSave = true; }
+  // Defaults to everything on -- see renderClientModeView for where these
+  // three toggles actually take effect.
+  if(!client.visibility){ client.visibility = {training: true, rehab: true, nutrition: true}; needsSave = true; }
   if(needsSave) scheduleClientSave(client);
 
   // Defensive: this function builds a lot of DOM (body metrics, nutrition
@@ -5446,6 +5474,36 @@ function renderClientProfile(){
     warn.textContent = "⚠ The automatic welcome email didn't go out when they joined — use \"Resend access code by email\" above once you've checked their email address.";
     wrap.appendChild(warn);
   }
+
+  const visLabel = document.createElement("div");
+  visLabel.className = "field-label";
+  visLabel.textContent = "Client View Access";
+  wrap.appendChild(visLabel);
+  const visHint = document.createElement("div");
+  visHint.className = "statshint";
+  visHint.textContent = "Choose what " + (client.name || "this client") + " can see under The Road Map in their own view. Turning something off hides it everywhere for them, including anything already scheduled into their agenda.";
+  wrap.appendChild(visHint);
+  const visBox = document.createElement("div");
+  visBox.className = "visibilitytoggles";
+  [
+    {key: "training", label: "Training Program"},
+    {key: "rehab", label: "Rehab"},
+    {key: "nutrition", label: "Nutrition"},
+  ].forEach(({key, label}) => {
+    const row = document.createElement("label");
+    row.className = "cmsuggesttogglelabel";
+    row.innerHTML = `<input type="checkbox" ${client.visibility[key] !== false ? "checked" : ""}> ${esc(label)}`;
+    row.querySelector("input").addEventListener("change", e => {
+      // Cloned rather than mutated in place -- same reasoning as the
+      // agendaNotes edits just below: keeps this a single, whole-object
+      // reassignment so there's no ambiguity about what scheduleClientSave
+      // is about to persist.
+      client.visibility = Object.assign({}, client.visibility, {[key]: e.target.checked});
+      scheduleClientSave(client);
+    });
+    visBox.appendChild(row);
+  });
+  wrap.appendChild(visBox);
 
   const goalsLabel = document.createElement("div");
   goalsLabel.className = "field-label";
