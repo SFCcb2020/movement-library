@@ -85,6 +85,20 @@ const TABLE_CONFIG = {
       { appField: "createdAt", column: "created_at" },
     ],
   },
+  // Leads submitted through the public ENQUIRE form on the launch screen
+  // (see clientPortal.js's submitEnquiry -- unlike everything else in that
+  // file, it isn't access-code-gated, since whoever fills it out isn't a
+  // client yet). Rows are inserted by the SECURITY DEFINER submit_enquiry()
+  // function, not through this shim's own .add() -- the coach side only
+  // ever reads/updates them (status changes) from here.
+  enquiries: {
+    table: "enquiries",
+    updateRpc: "update_enquiry_doc",
+    idParam: "p_enquiry_id",
+    mirrors: [
+      { appField: "createdAt", column: "created_at" },
+    ],
+  },
 };
 
 function rowToDoc(config, row) {
