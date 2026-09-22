@@ -7631,6 +7631,16 @@ let currentEnquiryId = null;
 // not here -- see the comment there for why (it has to exist before
 // initEnquiries() is first called eagerly at page load).
 
+// Tracks whether initEnquiries() has ever actually finished successfully --
+// separate from enquiriesDbInitDone (which is only set true right at the
+// end, once the subscription is confirmed live) so renderEnquiryList() can
+// tell "hasn't connected yet / just failed" apart from "connected fine and
+// there really is nothing here yet". Without that distinction both states
+// show the exact same "No enquiries yet" text, which is indistinguishable
+// from a real bug -- exactly what made an earlier version of this function
+// silently fail forever with no visible sign anything was wrong.
+let enquiriesLoadFailed = false;
+
 async function initEnquiries(){
   if(enquiriesDbInitDone) return; // already subscribed -- avoid a duplicate realtime channel on retry
   db = await getDb();
@@ -7642,23 +7652,58 @@ async function initEnquiries(){
     return;
   }
 
-  enquiriesDbInitDone = true;
-  // A real db just became available (possibly after the note above was
-  // already shown from an earlier attempt this same page load, e.g. this
-  // tab was opened right before sign-in finished) -- clear it, and see
-  // retryDbInit below for why this can now succeed on a second try instead
-  // of being stuck blank until a full page reload.
-  const enqNote = document.getElementById("dbnoteEnquiries");
-  if(enqNote) enqNote.hidden = true;
-  enquiriesCol = db.collection("enquiries");
-  enquiriesCol.orderBy("createdAt", "desc").limit(300).onSnapshot(snap => {
-    enquiriesCache = snap.docs.map(d => Object.assign({id: d.id}, d.data()));
+  // Everything from here down is wrapped in try/catch on purpose: this used
+  // to set enquiriesDbInitDone = true BEFORE building the collection
+  // subscription, so if that setup ever threw for any reason, this
+  // function would permanently no-op on every future call (tab click,
+  // retryDbInit on sign-in, all of it) for the rest of the page's life --
+  // with no error ever shown anywhere. Now enquiriesDbInitDone is only set
+  // once the subscription is actually confirmed live, and a failure here
+  // is visible (both as a banner and as a distinct empty-state message)
+  // and retryable instead of a silent, permanent dead end.
+  try{
+    const enqNote = document.getElementById("dbnoteEnquiries");
+    if(enqNote) enqNote.hidden = true;
+    enquiriesLoadFailed = false;
+    enquiriesCol = db.collection("enquiries");
+    // Marked done here, right after the (potentially-throwing) collection()
+    // call succeeds, and BEFORE subscribing -- onSnapshot's first callback
+    // can fire synchronously (it does in this app's tests, and may in a
+    // real client depending on the underlying implementation), and its
+    // render call needs enquiriesDbInitDone to already read true so
+    // renderEnquiryList() shows the real "No enquiries yet" state instead
+    // of getting stuck on the "Loading…" placeholder despite data having
+    // already arrived.
+    enquiriesDbInitDone = true;
+    enquiriesCol.orderBy("createdAt", "desc").limit(300).onSnapshot(snap => {
+      enquiriesCache = snap.docs.map(d => Object.assign({id: d.id}, d.data()));
+      renderEnquiryList();
+      renderEnquiryHost();
+      updateEnquiriesTabBadge();
+    }, err => {
+      enquiriesLoadFailed = true;
+      enquiriesDbInitDone = false; // let a manual retry or the next sign-in try again
+      flashNote("Couldn't load enquiries (" + err.code + ").", "dbnoteEnquiries");
+      renderEnquiryList();
+    });
+  }catch(e){
+    console.error("[initEnquiries] setup failed", e);
+    enquiriesLoadFailed = true;
+    enquiriesDbInitDone = false;
+    flashNote("Couldn't load enquiries (" + (e && e.message ? e.message : "unknown error") + "). Try the Refresh button below, or reopen this tab.", "dbnoteEnquiries");
     renderEnquiryList();
     renderEnquiryHost();
-    updateEnquiriesTabBadge();
-  }, err => {
-    flashNote("Couldn't load enquiries (" + err.code + ").", "dbnoteEnquiries");
-  });
+  }
+}
+
+// Manual escape hatch on the Enquiries tab itself: resets the guard and
+// tries initEnquiries() again right now, instead of needing a full sign-
+// out/sign-in cycle or a page reload to get a second attempt.
+function retryEnquiries(){
+  enquiriesDbInitDone = false;
+  enquiriesLoadFailed = false;
+  renderEnquiryList();
+  initEnquiries();
 }
 
 // Mirrors updateMessagesTabBadge's look exactly (same ".msgunreadbadge"
@@ -7697,7 +7742,15 @@ function renderEnquiryList(){
   if(!el) return;
   el.innerHTML = "";
   if(!enquiriesCache.length){
-    el.innerHTML = '<div class="emptyprogs">No enquiries yet — they\'ll show up here the moment someone submits the Enquire form.</div>';
+    if(enquiriesLoadFailed){
+      el.innerHTML = '<div class="emptyprogs">Couldn\'t load enquiries just now. <button type="button" id="retryEnquiriesBtn" class="clearbtn">Refresh</button></div>';
+      el.querySelector("#retryEnquiriesBtn").addEventListener("click", retryEnquiries);
+    } else if(!enquiriesDbInitDone){
+      el.innerHTML = '<div class="emptyprogs">Loading… <button type="button" id="retryEnquiriesBtn" class="clearbtn">Refresh</button></div>';
+      el.querySelector("#retryEnquiriesBtn").addEventListener("click", retryEnquiries);
+    } else {
+      el.innerHTML = '<div class="emptyprogs">No enquiries yet — they\'ll show up here the moment someone submits the Enquire form.</div>';
+    }
     return;
   }
   enquiriesCache.forEach(en => {
