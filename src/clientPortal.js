@@ -147,3 +147,14 @@ export async function markCoachMessagesReadForCode(code) {
   });
   if (error) throw error;
 }
+
+// Submits the public ENQUIRE form on the launch screen -- the one call in
+// this whole file that ISN'T access-code-gated, since whoever fills this out
+// is a stranger, not yet a client. The server-side submit_enquiry() function
+// resolves the (single) coach account itself and does its own light
+// sanitizing (trimming field lengths); this just forwards whatever the form
+// collected.
+export async function submitEnquiry(payload) {
+  const { error } = await supabase.rpc("submit_enquiry", { p_payload: payload || {} });
+  if (error) throw error;
+}
