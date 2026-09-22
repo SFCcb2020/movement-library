@@ -438,6 +438,15 @@ footer{margin-top:34px; text-align:center; color:var(--ink-dim); font-size:12.5p
 }
 .exswap:hover{border-color:var(--select); color:var(--select);}
 .exswap.open{background:var(--select-soft); color:var(--select); border-color:var(--select);}
+
+/* Supersets/circuits -- coach editor (see computeExerciseGroups/buildLinkToggle) */
+.exgrouplabel{display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--accent2); margin:12px 0 -2px;}
+.exgrouplabel .exgroup-ungroup{background:none; border:none; color:var(--ink-dim); font-family:inherit; font-size:10.5px; text-decoration:underline; cursor:pointer; padding:0; text-transform:none; letter-spacing:0; font-weight:400;}
+.exrow-grouped{border-left:3px solid var(--accent2); padding-left:10px; margin-left:-1px;}
+.exlinktoggle{padding:2px 0 2px 10px;}
+.exlinkbtn{background:none; border:1px dashed var(--line); border-radius:6px; padding:4px 10px; font-family:inherit; font-size:11px; color:var(--ink-dim); cursor:pointer;}
+.exlinkbtn:hover{border-color:var(--accent2); color:var(--accent2);}
+.exlinkbtn.linked{border-style:solid; border-color:var(--accent2); color:var(--accent2); background:var(--accent-soft);}
 .swappanel{position:relative; margin-top:-2px;}
 .swappanel .swapinput{
   width:100%; font-family:inherit; font-size:13px; border:1px solid var(--select); border-radius:8px;
@@ -558,6 +567,15 @@ footer{margin-top:34px; text-align:center; color:var(--ink-dim); font-size:12.5p
    opens (reusing .gatecard's card look, just narrower content per field). */
 .launchhero{max-width:480px; margin:0 auto 22px; text-align:center; color:var(--ink-dim); font-size:14px;}
 .launchgrid{display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:14px; max-width:820px; margin:0 auto;}
+/* Without this, setting launchGrid.hidden=true in JS silently does nothing:
+   an author rule like .launchgrid{display:grid} always beats the browser's
+   own built-in "[hidden]{display:none}" rule, hidden attribute or not. That
+   was the bug behind tapping a launch button (e.g. "Sign In") appearing to
+   do nothing where you tapped -- the grid never actually disappeared, so
+   the panel that opened just rendered underneath it, further down the
+   page. This one rule is more specific than the plain .launchgrid rule
+   above, so it wins and the grid actually hides now. */
+.launchgrid[hidden]{display:none;}
 .launchcard{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:20px 18px; text-align:center; display:flex; flex-direction:column;}
 .launchcard h3{margin:0 0 6px; font-family:"Oswald",sans-serif; font-size:15px; text-transform:uppercase; letter-spacing:.03em;}
 .launchcard p{color:var(--ink-dim); font-size:12.5px; margin:0 0 16px; flex:1;}
@@ -573,8 +591,14 @@ footer{margin-top:34px; text-align:center; color:var(--ink-dim); font-size:12.5p
   text-transform:uppercase;
 }
 .launchcard-coach:hover{filter:brightness(1.05);}
-.launchbtn{background:var(--surface-2); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:10px 16px; font-family:inherit; font-weight:600; font-size:13px; cursor:pointer;}
+.launchcard-coach:active{filter:brightness(0.95); transform:scale(0.98);}
+/* :active tap feedback -- mobile browsers don't fire :hover on touch, so
+   without this, tapping a launch button gave no visible response at all
+   until (with the [hidden] fix above) the panel swap finished rendering.
+   A small, instant press effect confirms the tap landed right away. */
+.launchbtn{background:var(--surface-2); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:10px 16px; font-family:inherit; font-weight:600; font-size:13px; cursor:pointer; transition:transform .08s ease;}
 .launchbtn:hover{border-color:var(--select);}
+.launchbtn:active{transform:scale(0.96);}
 .launchbtn-primary{background:var(--accent); color:var(--accent-ink); border-color:transparent;}
 .launchbtn-primary:hover{filter:brightness(1.05);}
 .launchbtn-peach{background:var(--accent2); color:var(--accent2-ink); border-color:transparent;}
@@ -582,6 +606,7 @@ footer{margin-top:34px; text-align:center; color:var(--ink-dim); font-size:12.5p
 .launchbtn-ghost{background:none; color:var(--ink-dim);}
 .launchpanel{position:relative;}
 .launchback{background:none; border:none; color:var(--ink-dim); font-family:inherit; font-size:12.5px; cursor:pointer; margin-top:14px; text-decoration:underline; padding:0;}
+.launchback:active{opacity:0.6;}
 .joinlinkbtn{display:inline-block; text-decoration:none;}
 
 .enquirepanel{max-width:460px;}
@@ -632,6 +657,17 @@ footer{margin-top:34px; text-align:center; color:var(--ink-dim); font-size:12.5p
   border-radius:6px; padding:6px 12px; font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer; margin-top:2px;
 }
 .cmaddsetbtn:hover{background:var(--select-soft);}
+/* Rest timer (see buildRestTimerControl) -- sits inline at the end of one
+   set's row, so "finish the set, then hit Start" reads as a single line. */
+.cmresttimer{margin-left:auto; display:flex; align-items:center; gap:6px; flex:none;}
+.cmreststart{background:none; border:1px solid var(--accent2); color:var(--accent2); border-radius:999px; padding:5px 11px; font-family:inherit; font-size:11px; font-weight:600; cursor:pointer; white-space:nowrap;}
+.cmreststart:hover{background:var(--accent2); color:var(--accent2-ink);}
+.cmresttimeleft{font-family:"Oswald",sans-serif; font-size:14px; font-weight:700; color:var(--accent2); min-width:34px; text-align:right;}
+.cmreststop{background:none; border:1px solid var(--line); color:var(--ink-dim); border-radius:999px; padding:4px 9px; font-family:inherit; font-size:10.5px; cursor:pointer;}
+.cmreststop:hover{border-color:var(--coral); color:var(--coral);}
+/* Supersets/circuits -- client's read-only view of the coach's grouping. */
+.cmexrow-grouped{border-left:3px solid var(--accent2); padding-left:12px; margin-left:-1px;}
+.cmexgrouplabel{font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--accent2); margin-bottom:4px;}
 .cmweekselect{display:block; font-size:12.5px; color:var(--ink-dim); font-weight:600; margin:2px 0 12px;}
 .cmweekselect select{font-family:inherit; font-size:12.5px; border:1px solid var(--line); border-radius:6px; padding:5px 8px; margin-left:6px; background:var(--bg); color:var(--ink); font-weight:500;}
 .cmsuggesttogglelabel{
