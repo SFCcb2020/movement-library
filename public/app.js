@@ -1149,8 +1149,14 @@ document.getElementById("enquireForm").addEventListener("submit", async e => {
   const name = document.getElementById("enquireName").value.trim();
   const email = document.getElementById("enquireEmail").value.trim();
   const phone = document.getElementById("enquirePhone").value.trim();
+  const instagram = document.getElementById("enquireInstagram").value.trim();
   const goals = document.getElementById("enquireGoals").value.trim();
   const experience = document.getElementById("enquireExperience").value.trim();
+  const struggle = document.getElementById("enquireStruggle").value.trim();
+  const priority = (document.querySelector('input[name="enquirePriority"]:checked') || {}).value || "";
+  const coachingSetup = Array.from(document.querySelectorAll('input[name="enquireCoachingSetup"]:checked')).map(el => el.value);
+  const triedCoach = document.getElementById("enquireTriedCoach").value.trim();
+  const anythingElse = document.getElementById("enquireAnythingElse").value.trim();
   statusEl.style.color = "";
   if(!name || !email){
     statusEl.textContent = "Please fill in your name and email.";
@@ -1159,7 +1165,7 @@ document.getElementById("enquireForm").addEventListener("submit", async e => {
   submitBtn.disabled = true;
   statusEl.textContent = "Sending...";
   try{
-    await window.__clientPortal.submitEnquiry({name, email, phone, goals, experience});
+    await window.__clientPortal.submitEnquiry({name, email, phone, instagram, goals, experience, struggle, priority, coachingSetup, triedCoach, anythingElse});
     statusEl.style.color = "#1a7a3c";
     statusEl.textContent = "Thanks! I'll be in touch soon.";
     document.getElementById("enquireForm").reset();
@@ -2761,9 +2767,15 @@ function scheduleClientSave(client){
       // for a client you added by hand and want to be able to email later.
       email: client.email || "",
       // Captured on the reorganized Client Profile's "Contact & Personal
-      // Info" pill -- not read anywhere yet (no automated birthday message
-      // exists), just stored so it's there once that gets built.
+      // Info" pill. Read by birthdayNotificationEntries() to flag today's
+      // birthdays under the Notifications tab (no automated birthday
+      // message yet -- just the flag).
       birthday: client.birthday || "",
+      // The calendar year this client's birthday notification was last
+      // dismissed (see markBirthdaySeen) -- recurs every year, unlike
+      // seenByCoach on a session note, since the same birthday comes back
+      // around annually and should flag again next year.
+      birthdayAckYear: client.birthdayAckYear || null,
       // The client's own opt-in toggle on their program view (see
       // buildClientProgramCard) -- purely a display preference, never
       // touches the coach's actual prescription.
@@ -7149,6 +7161,33 @@ function autoUnarchiveClientsWithUnread(){
 // Builder and THE SQUAD (see ensureBuilderInited(), called eagerly at the
 // bottom of this file), so a new note shows up here live, same as
 // everywhere else in the app.
+// True when `birthdayStr` (an "YYYY-MM-DD" <input type=date> value) falls on
+// today's month/day, regardless of the year stored -- someone's birth year
+// obviously never changes, but "is it their birthday today" has to compare
+// against whatever today's date is.
+function isBirthdayToday(birthdayStr){
+  if(!birthdayStr) return false;
+  const parts = String(birthdayStr).split("-");
+  if(parts.length !== 3) return false;
+  const month = parseInt(parts[1], 10);
+  const day = parseInt(parts[2], 10);
+  if(!month || !day) return false;
+  const now = new Date();
+  return (now.getMonth() + 1) === month && now.getDate() === day;
+}
+
+// One entry per client whose birthday is today, shaped like a session-note
+// notification (kind/client/entry.seenByCoach) so the shared badge-count and
+// render logic below don't need to special-case it. "Seen" is tracked by
+// calendar year (birthdayAckYear) rather than a one-time flag, since the
+// same birthday flags again next year.
+function birthdayNotificationEntries(){
+  const year = new Date().getFullYear();
+  return clientsCache
+    .filter(c => isBirthdayToday(c.birthday))
+    .map(c => ({kind: "birthday", client: c, entry: {seenByCoach: c.birthdayAckYear === year}}));
+}
+
 function notificationEntries(){
   const out = [];
   programsCache.forEach(program => {
@@ -7156,12 +7195,32 @@ function notificationEntries(){
     Object.keys(byClient).forEach(clientId => {
       (byClient[clientId] || []).forEach(entry => {
         if(!entry.notes) return; // notifications are specifically about left notes, not every saved session
-        out.push({program, clientId, client: clientsCache.find(c => c.id === clientId), entry});
+        out.push({kind: "note", program, clientId, client: clientsCache.find(c => c.id === clientId), entry});
       });
     });
   });
-  out.sort((a, b) => (b.entry.completedAt || "").localeCompare(a.entry.completedAt || ""));
-  return out;
+  const withBirthdays = birthdayNotificationEntries().concat(out);
+  withBirthdays.sort((a, b) => {
+    if(a.kind === "birthday" && b.kind !== "birthday") return -1;
+    if(b.kind === "birthday" && a.kind !== "birthday") return 1;
+    if(a.kind === "birthday" && b.kind === "birthday"){
+      return (a.client && a.client.name || "").localeCompare(b.client && b.client.name || "");
+    }
+    return (b.entry.completedAt || "").localeCompare(a.entry.completedAt || "");
+  });
+  return withBirthdays;
+}
+
+// Dismisses today's birthday flag for this one client for the current
+// calendar year only -- it comes back around and flags again next year,
+// same as the birthday itself.
+function markBirthdaySeen(client){
+  if(!client) return;
+  const year = new Date().getFullYear();
+  if(client.birthdayAckYear === year) return;
+  client.birthdayAckYear = year;
+  renderNotificationsList(); // immediate feedback -- don't wait on the save round-trip
+  scheduleClientSave(client);
 }
 
 function updateNotificationsTabBadge(){
@@ -7217,11 +7276,35 @@ function renderNotificationsList(){
   const entries = notificationEntries();
   updateNotificationsTabBadge();
   if(!entries.length){
-    el.innerHTML = '<div class="emptyprogs">No session notes from clients yet — they\'ll show up here as soon as one is saved.</div>';
+    el.innerHTML = '<div class="emptyprogs">Nothing here yet — client session notes and today\'s birthdays will show up here.</div>';
     return;
   }
-  entries.forEach(({program, clientId, client, entry}) => {
+  entries.forEach(item => {
     const row = document.createElement("div");
+
+    if(item.kind === "birthday"){
+      const {client, entry} = item;
+      row.className = "notificationrow birthdayrow" + (entry.seenByCoach ? "" : " unseen");
+      const first = client ? (client.firstName || client.name || "this client") : "this client";
+      row.innerHTML = `
+        <div class="notificationhead">
+          <span class="notificationclient">${esc(client ? (client.name || "Unnamed client") : "Former client")}</span>
+          <span class="notificationdate">Today</span>
+        </div>
+        <div class="notificationmeta">🎂 Birthday</div>
+        <div class="notificationnote">It's ${esc(first)}'s birthday today!</div>
+      `;
+      if(client){
+        row.querySelector(".notificationclient").addEventListener("click", () => {
+          goToClientProfile(client.id);
+        });
+      }
+      row.addEventListener("click", () => markBirthdaySeen(client));
+      el.appendChild(row);
+      return;
+    }
+
+    const {program, clientId, client, entry} = item;
     row.className = "notificationrow" + (entry.seenByCoach ? "" : " unseen");
     const where = [entry.programName, entry.dayLabel, entry.weekLabel].filter(Boolean).join(" — ");
     const rpeTag = entry.rpe ? `RPE ${entry.rpe}` : "";
@@ -7799,9 +7882,15 @@ function renderEnquiryHost(){
   detail.innerHTML = `
     <div class="detail"><b>Email</b>${esc(en.email || "—")}</div>
     <div class="detail"><b>Phone</b>${esc(en.phone || "—")}</div>
+    <div class="detail"><b>Instagram</b>${esc(en.instagram || "—")}</div>
     <div class="detail"><b>Submitted</b>${esc(fmtEnquiryDate(en.createdAt))}</div>
     <div class="detail"><b>Goals</b>${esc(en.goals || "—")}</div>
     <div class="detail"><b>Experience</b>${esc(en.experience || "—")}</div>
+    <div class="detail"><b>Biggest struggle recently</b>${esc(en.struggle || "—")}</div>
+    <div class="detail"><b>90-day priority</b>${esc(en.priority || "—")}</div>
+    <div class="detail"><b>Coaching set up interested in</b>${esc(Array.isArray(en.coachingSetup) && en.coachingSetup.length ? en.coachingSetup.join(", ") : "—")}</div>
+    <div class="detail"><b>Tried a coach before</b>${esc(en.triedCoach || "—")}</div>
+    <div class="detail"><b>Anything else to know</b>${esc(en.anythingElse || "—")}</div>
   `;
   wrap.appendChild(detail);
 
@@ -7868,8 +7957,14 @@ async function convertEnquiryToClient(en){
   const noteParts = [];
   if(en.goals) noteParts.push("Goals (from enquiry): " + en.goals);
   if(en.experience) noteParts.push("Experience (from enquiry): " + en.experience);
+  if(en.struggle) noteParts.push("Biggest struggle recently (from enquiry): " + en.struggle);
+  if(en.priority) noteParts.push("90-day priority (from enquiry): " + en.priority);
+  if(Array.isArray(en.coachingSetup) && en.coachingSetup.length) noteParts.push("Coaching set up interested in (from enquiry): " + en.coachingSetup.join(", "));
+  if(en.triedCoach) noteParts.push("Tried a coach before (from enquiry): " + en.triedCoach);
+  if(en.anythingElse) noteParts.push("Anything else (from enquiry): " + en.anythingElse);
   if(en.email) noteParts.push("Email: " + en.email);
   if(en.phone) noteParts.push("Phone: " + en.phone);
+  if(en.instagram) noteParts.push("Instagram: " + en.instagram);
   const data = {
     name: en.name || "New Client", goals: "", notes: noteParts.join("\n\n"),
     liftStats: [], weightUnit: "kg", accessCode: genAccessCode(), tasks: [],
