@@ -6159,7 +6159,7 @@ initMessages();
 // actually succeeded once (dbInitDone / messagesDbInitDone guard above),
 // so this safely covers the case where either was called before the
 // coach's session had actually resolved yet.
-window.retryDbInit = () => { initCustomExercises(); initMessages(); };
+window.retryDbInit = () => { initCustomExercises(); initMessages(); initEnquiries(); };
 
 resolveOwnerStatus();
 
@@ -6233,6 +6233,13 @@ async function initMessages(){
   }
 
   messagesDbInitDone = true;
+  // A real db just became available (possibly after the note above was
+  // already shown from an earlier attempt this same page load, e.g. this
+  // tab was opened right before sign-in finished) -- clear it so it
+  // doesn't linger once sending/saving actually works. Same fix already
+  // applied to initCustomExercises() above.
+  const msgNote = document.getElementById("dbnoteMessages");
+  if(msgNote) msgNote.hidden = true;
   messagesCol = db.collection("messages");
   messagesCol.orderBy("createdAt", "asc").limit(1000).onSnapshot(snap => {
     messagesCache = snap.docs.map(d => Object.assign({id: d.id}, d.data()));
@@ -6569,8 +6576,10 @@ function buildClientMessagesPanel(client){
 let enquiriesCol = null;
 let enquiriesCache = [];
 let currentEnquiryId = null;
+let enquiriesDbInitDone = false; // guards initEnquiries() against a duplicate realtime channel on retry -- same pattern as messagesDbInitDone
 
 async function initEnquiries(){
+  if(enquiriesDbInitDone) return; // already subscribed -- avoid a duplicate realtime channel on retry
   db = await getDb();
 
   if(!db){
@@ -6580,6 +6589,14 @@ async function initEnquiries(){
     return;
   }
 
+  enquiriesDbInitDone = true;
+  // A real db just became available (possibly after the note above was
+  // already shown from an earlier attempt this same page load, e.g. this
+  // tab was opened right before sign-in finished) -- clear it, and see
+  // retryDbInit below for why this can now succeed on a second try instead
+  // of being stuck blank until a full page reload.
+  const enqNote = document.getElementById("dbnoteEnquiries");
+  if(enqNote) enqNote.hidden = true;
   enquiriesCol = db.collection("enquiries");
   enquiriesCol.orderBy("createdAt", "desc").limit(300).onSnapshot(snap => {
     enquiriesCache = snap.docs.map(d => Object.assign({id: d.id}, d.data()));
