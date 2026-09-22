@@ -9,7 +9,7 @@
 // fresh files on next load (Vite's hashed build filenames already handle
 // this for JS/CSS automatically -- bumping this mainly matters for
 // index.html, manifest.json, and the icons).
-const CACHE_NAME = "movement-library-shell-v1";
+const CACHE_NAME = "movement-library-shell-v2";
 const SHELL_FILES = ["/", "/index.html", "/manifest.json", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {
