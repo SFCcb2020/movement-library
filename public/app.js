@@ -871,7 +871,14 @@ let showAutoBuildForm = false;
 // just ask "who's on this program" / "is this person on it" without caring
 // whether it's an old program saved before group programs existed.
 function programClientIds(program){
-  if(program && Array.isArray(program.clientIds) && program.clientIds.length) return program.clientIds;
+  // Only fall back to the old single-client field when clientIds has never
+  // been set at all (a program saved before group programs existed and
+  // never touched since). Once clientIds exists as an array -- even an
+  // EMPTY one -- it's the authoritative, deliberate answer: otherwise
+  // removing the last assigned client would silently "come back" here from
+  // the old field (which nothing ever clears), making the chip's ✕ button
+  // look broken.
+  if(program && Array.isArray(program.clientIds)) return program.clientIds;
   if(program && program.clientId) return [program.clientId];
   return [];
 }
@@ -2307,14 +2314,26 @@ function buildProgramClientPicker(program, onChange){
       closeResults();
       render();
     };
-    input.addEventListener("input", () => {
+    // Shows every not-yet-assigned client when the box is empty (clicking
+    // in should show a pickable list right away, not require typing first),
+    // narrowing to matches once she types; the "+ Create as new client"
+    // option only makes sense once there's actually a name typed.
+    const showResults = () => {
       const q = input.value.trim().toLowerCase();
       closeResults();
-      if(!q) return;
       const assignedIds = programClientIds(program);
-      const matches = clientsCache.filter(c => !assignedIds.includes(c.id) && (c.name||"").toLowerCase().includes(q)).slice(0, 6);
+      const pool = clientsCache.filter(c => !assignedIds.includes(c.id));
+      const matches = (q ? pool.filter(c => (c.name||"").toLowerCase().includes(q)) : pool).slice(0, 8);
       resultsEl = document.createElement("div");
       resultsEl.className = "addex-results";
+      if(!matches.length && !q){
+        const empty = document.createElement("div");
+        empty.className = "addex-item";
+        empty.style.opacity = "0.6";
+        empty.style.cursor = "default";
+        empty.textContent = clientsCache.length ? "Everyone is already assigned to this program" : "No clients yet — type a name to create one";
+        resultsEl.appendChild(empty);
+      }
       matches.forEach(m => {
         const item = document.createElement("div");
         item.className = "addex-item";
@@ -2322,33 +2341,37 @@ function buildProgramClientPicker(program, onChange){
         item.addEventListener("mousedown", ev => { ev.preventDefault(); addClientId(m.id); });
         resultsEl.appendChild(item);
       });
-      const createItem = document.createElement("div");
-      createItem.className = "addex-item";
-      createItem.style.color = "var(--accent)";
-      createItem.textContent = `+ Create "${input.value.trim()}" as new client`;
-      createItem.addEventListener("mousedown", async ev => {
-        ev.preventDefault();
-        closeResults();
-        const now = new Date().toISOString();
-        const data = {name: input.value.trim(), goals: "", liftStats: [], weightUnit: "kg", notes: "", accessCode: genAccessCode(), tasks: [], createdAt: now, updatedAt: now};
-        if(clientsCol){
-          try{
-            const ref = await clientsCol.add(data);
-            addClientId(ref.id);
-          }catch(e){
+      if(q){
+        const createItem = document.createElement("div");
+        createItem.className = "addex-item";
+        createItem.style.color = "var(--accent)";
+        createItem.textContent = `+ Create "${input.value.trim()}" as new client`;
+        createItem.addEventListener("mousedown", async ev => {
+          ev.preventDefault();
+          closeResults();
+          const now = new Date().toISOString();
+          const data = {name: input.value.trim(), goals: "", liftStats: [], weightUnit: "kg", notes: "", accessCode: genAccessCode(), tasks: [], createdAt: now, updatedAt: now};
+          if(clientsCol){
+            try{
+              const ref = await clientsCol.add(data);
+              addClientId(ref.id);
+            }catch(e){
+              const id = "local-" + rid();
+              clientsCache.unshift(Object.assign({id}, data));
+              addClientId(id);
+            }
+          } else {
             const id = "local-" + rid();
             clientsCache.unshift(Object.assign({id}, data));
             addClientId(id);
           }
-        } else {
-          const id = "local-" + rid();
-          clientsCache.unshift(Object.assign({id}, data));
-          addClientId(id);
-        }
-      });
-      resultsEl.appendChild(createItem);
+        });
+        resultsEl.appendChild(createItem);
+      }
       searchWrap.appendChild(resultsEl);
-    });
+    };
+    input.addEventListener("focus", showResults);
+    input.addEventListener("input", showResults);
     input.addEventListener("blur", () => setTimeout(closeResults, 150));
     wrap.appendChild(searchWrap);
   }
@@ -5736,6 +5759,14 @@ async function initCustomExercises(){
     if(rehabInited) renderRehabEditor();
     if(nutritionInited) renderNutritionEditor();
     if(clientsTabInited) renderClientList();
+    // Messages is inited eagerly at page load (see below), often BEFORE
+    // this, clients' own eager load finishes -- without this, whichever of
+    // the two happened to resolve first "won", and if messages' own
+    // (empty-clientsCache) render won that race, the Messages tab got
+    // permanently stuck showing "Add a client on THE SQUAD tab first" even
+    // once clients had actually loaded, since nothing else ever re-rendered
+    // that list afterward.
+    renderMessageThreadList();
     safeRenderClientProfile();
     if(clientSession){
       const fresh = clientsCache.find(x => x.id === clientSession.id);
