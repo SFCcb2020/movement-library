@@ -695,6 +695,12 @@ let clientsTabInited = false;
 let nutritionInited = false;
 let messagesInited = false;
 let enquiriesInited = false;
+// Declared up here (not next to initEnquiries() itself further down) because
+// initEnquiries() is now also called eagerly at page load, alongside
+// initCustomExercises/initMessages -- a `let` declared below that call site
+// would still be in its temporal dead zone at the moment the eager call
+// synchronously checks it, throwing "Cannot access before initialization".
+let enquiriesDbInitDone = false;
 
 // Kicks off (once) and hands back a promise for the builder tab's db
 // subscription -- needed by anything that wants to create/save a program
@@ -7011,11 +7017,25 @@ initMessages();
 // loads, not just once the coach happens to open Program Builder or THE
 // SQUAD first.
 ensureBuilderInited();
+// Enquiries ALSO gets initialized eagerly here now, for the same reason as
+// Messages above, and to fix a real bug: it used to be purely lazy (only
+// loaded on an actual click into the Enquiries tab, or via retryDbInit
+// below firing from src/main.js's auth listener) -- but a coach who signs
+// out to test the public Enquire form, submits it, then signs straight
+// back in without ever clicking the Enquiries tab herself never triggered
+// either path, so the tab silently never loaded a single enquiry, ever,
+// even though every submission was saving to the database correctly the
+// whole time. Loading it here, unconditionally, the same way Messages and
+// Programs already do, means it's populated (and its unread badge is
+// accurate) from the moment the dashboard appears, with no tab click or
+// lucky auth-timing required.
+enquiriesInited = true;
+initEnquiries();
 // Called from src/main.js's watchAuthState every time the coach's session
 // changes (sign-in, sign-out, a code change) -- each is a no-op once it has
-// actually succeeded once (dbInitDone / messagesDbInitDone guard above),
-// so this safely covers the case where either was called before the
-// coach's session had actually resolved yet.
+// actually succeeded once (dbInitDone / messagesDbInitDone / enquiriesDbInitDone
+// guard above), so this safely covers the case where any of these were
+// called before the coach's session had actually resolved yet.
 window.retryDbInit = () => { initCustomExercises(); initMessages(); initEnquiries(); ensureBuilderInited(); };
 
 resolveOwnerStatus();
@@ -7545,7 +7565,9 @@ function buildClientMessagesPanel(client){
 let enquiriesCol = null;
 let enquiriesCache = [];
 let currentEnquiryId = null;
-let enquiriesDbInitDone = false; // guards initEnquiries() against a duplicate realtime channel on retry -- same pattern as messagesDbInitDone
+// enquiriesDbInitDone itself is declared up near the other tab-init flags,
+// not here -- see the comment there for why (it has to exist before
+// initEnquiries() is first called eagerly at page load).
 
 async function initEnquiries(){
   if(enquiriesDbInitDone) return; // already subscribed -- avoid a duplicate realtime channel on retry
