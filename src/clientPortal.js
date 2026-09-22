@@ -104,6 +104,35 @@ export async function saveProgramActualsForCode(code, programId, actuals) {
   if (error) throw error;
 }
 
+// A client's own per-week exercise swap, for one program. Same shape of
+// call as saveProgramActualsForCode above, just a different top-level doc
+// key on the server side (see save_program_swaps_for_code in schema.sql):
+// `swaps` is THIS client's own slice of program.swapsByClient (built
+// app-side), and the server writes it to only that one spot after
+// confirming the program is assigned to this access code.
+export async function saveProgramSwapsForCode(code, programId, swaps) {
+  const { error } = await supabase.rpc("save_program_swaps_for_code", {
+    p_code: (code || "").trim().toUpperCase(),
+    p_program_id: programId,
+    p_swaps: swaps,
+  });
+  if (error) throw error;
+}
+
+// A client's own finished-session log for one program -- an array of
+// {dayId, dayLabel, weekIndex, rpe, notes, completedAt, ...} entries, one
+// per training day they've saved from their own view. `sessionLogs` is
+// THIS client's whole slice of program.sessionLogsByClient (built
+// app-side); the server replaces just that one spot each time.
+export async function saveProgramSessionLogsForCode(code, programId, sessionLogs) {
+  const { error } = await supabase.rpc("save_program_session_logs_for_code", {
+    p_code: (code || "").trim().toUpperCase(),
+    p_program_id: programId,
+    p_session_logs: sessionLogs,
+  });
+  if (error) throw error;
+}
+
 export async function getRehabCasesForCode(code) {
   return callForCode("get_rehab_cases_for_code", code);
 }
