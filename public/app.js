@@ -2468,13 +2468,25 @@ function buildClientPicker(selectedId, onSelect){
     const input = wrap.querySelector(".clientsearch");
     let resultsEl = null;
     const closeResults = () => { if(resultsEl){ resultsEl.remove(); resultsEl = null; } };
-    input.addEventListener("input", () => {
+    // Shows every client when the box is empty (clicking in should show a
+    // pickable list right away, not require typing a name first) --
+    // narrows to matches once she types. Mirrors buildProgramClientPicker's
+    // own showResults above, so linking a client to a rehab case or
+    // nutrition plan works the same way as assigning one to a program.
+    const showResults = () => {
       const q = input.value.trim().toLowerCase();
       closeResults();
-      if(!q) return;
-      const matches = clientsCache.filter(c => (c.name||"").toLowerCase().includes(q)).slice(0, 6);
+      const matches = (q ? clientsCache.filter(c => (c.name||"").toLowerCase().includes(q)) : clientsCache).slice(0, 8);
       resultsEl = document.createElement("div");
       resultsEl.className = "addex-results";
+      if(!matches.length && !q){
+        const empty = document.createElement("div");
+        empty.className = "addex-item";
+        empty.style.opacity = "0.6";
+        empty.style.cursor = "default";
+        empty.textContent = "No clients yet — type a name to create one";
+        resultsEl.appendChild(empty);
+      }
       matches.forEach(m => {
         const item = document.createElement("div");
         item.className = "addex-item";
@@ -2482,35 +2494,39 @@ function buildClientPicker(selectedId, onSelect){
         item.addEventListener("mousedown", ev => { ev.preventDefault(); closeResults(); onSelect(m); });
         resultsEl.appendChild(item);
       });
-      const createItem = document.createElement("div");
-      createItem.className = "addex-item";
-      createItem.style.color = "var(--accent)";
-      createItem.textContent = `+ Create "${input.value.trim()}" as new client`;
-      createItem.addEventListener("mousedown", async ev => {
-        ev.preventDefault();
-        closeResults();
-        const now = new Date().toISOString();
-        const data = {name: input.value.trim(), goals: "", liftStats: [], weightUnit: "kg", notes: "", accessCode: genAccessCode(), tasks: [], createdAt: now, updatedAt: now};
-        if(clientsCol){
-          try{
-            const ref = await clientsCol.add(data);
-            onSelect(Object.assign({id: ref.id}, data));
-          }catch(e){
+      if(q){
+        const createItem = document.createElement("div");
+        createItem.className = "addex-item";
+        createItem.style.color = "var(--accent)";
+        createItem.textContent = `+ Create "${input.value.trim()}" as new client`;
+        createItem.addEventListener("mousedown", async ev => {
+          ev.preventDefault();
+          closeResults();
+          const now = new Date().toISOString();
+          const data = {name: input.value.trim(), goals: "", liftStats: [], weightUnit: "kg", notes: "", accessCode: genAccessCode(), tasks: [], createdAt: now, updatedAt: now};
+          if(clientsCol){
+            try{
+              const ref = await clientsCol.add(data);
+              onSelect(Object.assign({id: ref.id}, data));
+            }catch(e){
+              const id = "local-" + rid();
+              const rec = Object.assign({id}, data);
+              clientsCache.unshift(rec);
+              onSelect(rec);
+            }
+          } else {
             const id = "local-" + rid();
             const rec = Object.assign({id}, data);
             clientsCache.unshift(rec);
             onSelect(rec);
           }
-        } else {
-          const id = "local-" + rid();
-          const rec = Object.assign({id}, data);
-          clientsCache.unshift(rec);
-          onSelect(rec);
-        }
-      });
-      resultsEl.appendChild(createItem);
+        });
+        resultsEl.appendChild(createItem);
+      }
       wrap.appendChild(resultsEl);
-    });
+    };
+    input.addEventListener("focus", showResults);
+    input.addEventListener("input", showResults);
     input.addEventListener("blur", () => setTimeout(closeResults, 150));
   }
 
