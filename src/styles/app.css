@@ -503,8 +503,20 @@ footer{margin-top:34px; text-align:center; color:var(--ink-dim); font-size:12.5p
 .launchhero{max-width:480px; margin:0 auto 22px; text-align:center; color:var(--ink-dim); font-size:14px;}
 .launchgrid{display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:14px; max-width:820px; margin:0 auto;}
 .launchcard{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:20px 18px; text-align:center; display:flex; flex-direction:column;}
-.launchcard h3{margin:0 0 6px; font-family:"Oswald",sans-serif; font-size:15px;}
+.launchcard h3{margin:0 0 6px; font-family:"Oswald",sans-serif; font-size:15px; text-transform:uppercase; letter-spacing:.03em;}
 .launchcard p{color:var(--ink-dim); font-size:12.5px; margin:0 0 16px; flex:1;}
+/* Coach's card is a single <button> standing in for the whole card (see
+   index.html) -- filled solid pink (same --accent as the other primary
+   buttons), with its own label centered where the other cards' h3+p+button
+   stack would be. font/cursor/appearance resets undo the browser's default
+   <button> look, since nothing else here does that for us. */
+.launchcard-coach{
+  background:var(--accent); color:var(--accent-ink); border-color:transparent;
+  justify-content:center; align-items:center; cursor:pointer; appearance:none;
+  font-family:"Oswald",sans-serif; font-weight:600; font-size:15px; letter-spacing:.03em;
+  text-transform:uppercase;
+}
+.launchcard-coach:hover{filter:brightness(1.05);}
 .launchbtn{background:var(--surface-2); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:10px 16px; font-family:inherit; font-weight:600; font-size:13px; cursor:pointer;}
 .launchbtn:hover{border-color:var(--select);}
 .launchbtn-primary{background:var(--accent); color:var(--accent-ink); border-color:transparent;}
