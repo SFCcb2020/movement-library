@@ -1528,42 +1528,6 @@ function wireSwapButton(row, swapBtn, ex, onSwap){
   });
 }
 
-/** Generic editable exercise row (sets/reps/load/notes) used by the Rehab
- *  plan. `onChange`/`onRemove` let the caller decide what "save" and
- *  "remove" mean; `onSwap`, when given, shows a "⇄ Swap" button. Program
- *  Builder days use buildProgExRow instead, which understands weeks. */
-function buildExRow(ex, onChange, onRemove, onSwap){
-  const row = document.createElement("div");
-  row.className = "exrow";
-  row.innerHTML = `
-    <div class="exrow-top">
-      <div class="exname">${esc(ex.exercise)}
-        <div class="tagrow">
-          <span class="tag">${esc(ex.group)} — ${esc(ex.sub)}</span>
-          <span class="tag">${esc(ex.plane)}</span>
-          <span class="tag">${esc(ex.pattern)}</span>
-        </div>
-      </div>
-      <div class="exrow-actions">
-        ${onSwap ? '<button class="exswap" title="Swap for a different exercise" type="button">⇄ Swap</button>' : ""}
-        <button class="exremove" title="Remove exercise" type="button">✕</button>
-      </div>
-    </div>
-    <div class="exrow-fields">
-      <div class="exfield narrow"><label>Sets</label><input type="text" data-f="sets" value="${esc(ex.sets||"")}" placeholder="4"></div>
-      <div class="exfield narrow"><label>Reps</label><input type="text" data-f="reps" value="${esc(ex.reps||"")}" placeholder="8"></div>
-      <div class="exfield narrow"><label>Load</label><input type="text" data-f="load" value="${esc(ex.load||"")}" placeholder="70%"></div>
-      <div class="exfield notes"><label>Notes</label><input type="text" data-f="notes" value="${esc(ex.notes||"")}" placeholder="e.g. safety squat bar, tempo 3-1-1, cue: chest up"></div>
-    </div>
-  `;
-  row.querySelectorAll("input[data-f]").forEach(inp => {
-    inp.addEventListener("input", () => { ex[inp.dataset.f] = inp.value; onChange(); });
-  });
-  row.querySelector(".exremove").addEventListener("click", onRemove);
-  if(onSwap) wireSwapButton(row, row.querySelector(".exswap"), ex, onSwap);
-  return row;
-}
-
 /* ---------------------------------------------------------------------
    Multi-week progressive overload
 
@@ -1831,7 +1795,19 @@ function progressionOf(ex, weeks){
 // already has a value -- that way nothing already prescribed just vanishes
 // from a client's screen the moment this ships; it only shows the new
 // picker/single-field UI once the coach actually chooses a mode herself.
-function effectiveLoadMode(ex){
+//
+// `clientId`, when given, lets a program shared by several clients
+// (programClientIds(program).length > 1) show a DIFFERENT mode to each
+// person -- ex.clientRx[clientId] is that person's own override
+// ({loadMode, load, rir, rpe}, any subset), written the moment a coach
+// picks a mode or types a value while referencing them specifically in the
+// builder (see buildProgExRow). No override for that client, or no
+// clientId passed at all, falls straight back to the shared behaviour
+// above -- so a single-client program, and a group program before any
+// override is set, work exactly as they always have.
+function effectiveLoadMode(ex, clientId){
+  const rx = clientId && ex.clientRx && ex.clientRx[clientId];
+  if(rx && rx.loadMode) return rx.loadMode;
   if(ex.loadMode) return ex.loadMode;
   if(ex.rpe) return "rpe";
   if(ex.rir) return "rir";
@@ -1839,27 +1815,44 @@ function effectiveLoadMode(ex){
   return "blank";
 }
 
+// Resolves one intensity field's value for a specific viewer: that
+// client's own override value if they have one actually set, otherwise
+// whatever the shared prescription (`sharedSource` -- the exercise itself
+// for a single-week row, or one week's progression entry for a multi-week
+// row) already has. Shared by loadIntensityCell (reading) and
+// buildProgExRow (the coach's input field, so what she sees pre-filled
+// matches what a client would actually be shown).
+function resolvedIntensityValue(ex, fieldKey, clientId, sharedSource){
+  const rx = clientId && ex.clientRx && ex.clientRx[clientId];
+  if(rx && rx[fieldKey] !== undefined && rx[fieldKey] !== "") return rx[fieldKey];
+  return (sharedSource && sharedSource[fieldKey]) || "";
+}
+
 // Plain cell text for one week's intensity value under an exercise's chosen
 // load mode -- "70%", "RIR 2", "RPE 8", or "" for blank mode (a brand-new
 // client with no 1RM/RIR/RPE reference point yet, so there's nothing to
 // show and nothing forcing the coach to fill in a number that doesn't
 // apply). `wk` is either the exercise itself (single-week programs) or one
-// week's progression entry (multi-week).
-function loadIntensityCell(ex, wk){
-  const mode = effectiveLoadMode(ex);
-  if(mode === "percent") return wk.load || "";
-  if(mode === "rir") return wk.rir ? "RIR " + wk.rir : "";
-  if(mode === "rpe") return wk.rpe ? "RPE " + wk.rpe : "";
+// week's progression entry (multi-week); it's also this function's
+// fallback value when `clientId` has no override of their own.
+function loadIntensityCell(ex, wk, clientId){
+  const mode = effectiveLoadMode(ex, clientId);
+  const fieldKey = LOAD_MODE_FIELD_KEY[mode];
+  if(!fieldKey) return "";
+  const raw = resolvedIntensityValue(ex, fieldKey, clientId, wk);
+  if(mode === "percent") return raw || "";
+  if(mode === "rir") return raw ? "RIR " + raw : "";
+  if(mode === "rpe") return raw ? "RPE " + raw : "";
   return "";
 }
 
 // Same value, formatted as a trailing connector to append after "3×10" --
 // " @ 70%" for a percent, " (RIR 2)"/" (RPE 8)" for the other two, or ""
 // when there's nothing to show.
-function loadIntensityText(ex, wk){
-  const cell = loadIntensityCell(ex, wk);
+function loadIntensityText(ex, wk, clientId){
+  const cell = loadIntensityCell(ex, wk, clientId);
   if(!cell) return "";
-  return effectiveLoadMode(ex) === "percent" ? " @ " + cell : " (" + cell + ")";
+  return effectiveLoadMode(ex, clientId) === "percent" ? " @ " + cell : " (" + cell + ")";
 }
 
 const LOAD_MODE_FIELD_KEY = {percent: "load", rir: "rir", rpe: "rpe"};
@@ -2284,17 +2277,66 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
     </div>
   `;
 
-  const mode = effectiveLoadMode(ex);
+  // A program can be assigned to more than one client (group programs).
+  // They share one sets/reps/load prescription, but "Prescribe by" can
+  // still be set differently per person -- e.g. one client tracks a 1RM so
+  // % makes sense for her, another doesn't and needs RPE instead. This
+  // reuses the same "Referencing progress for" picker already shown above
+  // the day list for Apply Progression/the Logged column: whichever client
+  // it's currently set to is who a Prescribe-by change or a typed
+  // intensity value applies to. See effectiveLoadMode/resolvedIntensityValue
+  // for how a per-client override (ex.clientRx[clientId]) falls back to
+  // this exercise's shared loadMode/load/rir/rpe when that client has none.
+  const groupClientIds = programClientIds(program);
+  const isGroupProgram = groupClientIds.length > 1;
+  const refClientId = isGroupProgram ? builderRefClientIdFor(program) : null;
+  const refClient = refClientId ? clientsCache.find(c => c.id === refClientId) : null;
+  const activeRx = refClientId && ex.clientRx && ex.clientRx[refClientId];
+
+  const mode = effectiveLoadMode(ex, refClientId);
+  const prescribeByLabel = refClient ? `Prescribe by (${esc(refClient.name || "this client")})` : "Prescribe by";
+
+  // Where a Prescribe-by mode change or a typed intensity value actually
+  // gets written -- the referenced client's own override on a group
+  // program, or the exercise's shared fields otherwise (unchanged from
+  // before this feature existed).
+  function writeLoadMode(newMode){
+    if(isGroupProgram && refClientId){
+      ex.clientRx = ex.clientRx || {};
+      ex.clientRx[refClientId] = Object.assign({}, ex.clientRx[refClientId], {loadMode: newMode});
+    } else {
+      ex.loadMode = newMode;
+    }
+  }
+  function writeRxValue(fieldKey, value){
+    if(isGroupProgram && refClientId){
+      ex.clientRx = ex.clientRx || {};
+      // Seed the override with whichever mode is currently showing (the
+      // shared default, if this is the first thing being set for this
+      // client) so typing a number doesn't leave the override's mode
+      // undefined -- it keeps reading whatever's already prescribed.
+      ex.clientRx[refClientId] = Object.assign({loadMode: mode}, ex.clientRx[refClientId], {[fieldKey]: value});
+    } else {
+      ex[fieldKey] = value;
+      // restSeconds (like notes) is a flat, single property of the
+      // exercise itself, not something that varies week to week -- so it
+      // never gets mirrored into the per-week progression array.
+      if(Array.isArray(ex.progression) && ex.progression[0] && fieldKey !== "notes" && fieldKey !== "restSeconds"){
+        ex.progression[0][fieldKey] = value;
+      }
+    }
+  }
 
   if(weeks <= 1){
     const fieldKey = LOAD_MODE_FIELD_KEY[mode]; // undefined for "blank" -- no field shown then
+    const rxValue = fieldKey ? resolvedIntensityValue(ex, fieldKey, refClientId, ex) : "";
     row.innerHTML = topHtml + `
       <div class="exrow-fields">
         <div class="exfield narrow"><label>Sets</label><input type="text" data-f="sets" value="${esc(ex.sets||"")}" placeholder="4"></div>
         <div class="exfield narrow"><label>Reps</label><input type="text" data-f="reps" value="${esc(ex.reps||"")}" placeholder="8"></div>
         <div class="exfield narrow"><label>Rest (sec)</label><input type="text" inputmode="numeric" data-f="restSeconds" value="${esc(ex.restSeconds||"")}" placeholder="90"></div>
-        <div class="exfield narrow loadmodefield"><label>Prescribe by</label></div>
-        ${fieldKey ? `<div class="exfield narrow"><label>${esc(LOAD_MODE_LABEL[mode])}</label><input type="text" data-f="${fieldKey}" value="${esc(ex[fieldKey]||"")}" placeholder="${esc(LOAD_MODE_PLACEHOLDER[mode])}"></div>` : `<div class="exfield narrow loadmodeblank"><label>&nbsp;</label><span class="loadmodeblanknote">No reference — client's own judgement</span></div>`}
+        <div class="exfield narrow loadmodefield"><label>${prescribeByLabel}</label></div>
+        ${fieldKey ? `<div class="exfield narrow"><label>${esc(LOAD_MODE_LABEL[mode])}</label><input type="text" data-rxf="${fieldKey}" value="${esc(rxValue)}" placeholder="${esc(LOAD_MODE_PLACEHOLDER[mode])}"></div>` : `<div class="exfield narrow loadmodeblank"><label>&nbsp;</label><span class="loadmodeblanknote">No reference — client's own judgement</span></div>`}
         <div class="exfield notes"><label>Notes</label><input type="text" data-f="notes" value="${esc(ex.notes||"")}" placeholder="e.g. safety squat bar, tempo 3-1-1, cue: chest up"></div>
       </div>
     `;
@@ -2304,17 +2346,20 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
     const select = buildLoadModeSelect(ex, mode);
     prescribeByWrap.appendChild(select);
     select.addEventListener("change", () => {
-      ex.loadMode = select.value;
+      writeLoadMode(select.value);
       onChange();
       renderEditor(); // rebuild so the right single field (or blank note) shows
+    });
+
+    const rxInput = row.querySelector("input[data-rxf]");
+    if(rxInput) rxInput.addEventListener("input", () => {
+      writeRxValue(rxInput.dataset.rxf, rxInput.value);
+      onChange();
     });
 
     row.querySelectorAll("input[data-f]").forEach(inp => {
       inp.addEventListener("input", () => {
         ex[inp.dataset.f] = inp.value;
-        // restSeconds (like notes) is a flat, single property of the
-        // exercise itself, not something that varies week to week -- so it
-        // never gets mirrored into the per-week progression array.
         if(Array.isArray(ex.progression) && ex.progression[0] && inp.dataset.f !== "notes" && inp.dataset.f !== "restSeconds"){
           ex.progression[0][inp.dataset.f] = inp.value;
         }
@@ -2327,18 +2372,22 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
     // own sets -- this read-only column can only show one person's log at
     // a time, so it follows whichever client the "Referencing progress
     // for" picker above has selected (defaults to the only/first one).
-    const refClientId = builderRefClientIdFor(program);
     const fieldKey = LOAD_MODE_FIELD_KEY[mode]; // undefined for "blank"
+    // A per-client override's intensity value is a single flat number
+    // (this client's own way of reading the prescription), not a whole
+    // second week-by-week progression track -- so once one is active for
+    // whoever's referenced, the week grid stops showing a per-week field
+    // for it and a single field appears below instead, next to Rest/Notes.
     row.innerHTML = topHtml + `
       <div class="exrow-fields">
-        <div class="exfield narrow loadmodefield"><label>Prescribe by</label></div>
+        <div class="exfield narrow loadmodefield"><label>${prescribeByLabel}</label></div>
       </div>
       <div class="weekgrid">
         <div class="weekcol weekcol-label">
           <div class="weeklabel">&nbsp;</div>
           <div class="rowlabel">Sets</div>
           <div class="rowlabel">Reps</div>
-          ${fieldKey ? `<div class="rowlabel">${esc(LOAD_MODE_LABEL[mode])}</div>` : ""}
+          ${fieldKey && !activeRx ? `<div class="rowlabel">${esc(LOAD_MODE_LABEL[mode])}</div>` : ""}
           <div class="rowdivider"></div>
           <div class="rowlabel actual">Logged</div>
         </div>
@@ -2347,7 +2396,7 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
             <div class="weeklabel">Week ${i+1}</div>
             <input type="text" data-wf="sets" data-wi="${i}" value="${esc(wk.sets||"")}" placeholder="Sets">
             <input type="text" data-wf="reps" data-wi="${i}" value="${esc(wk.reps||"")}" placeholder="Reps">
-            ${fieldKey ? `<input type="text" data-wf="${fieldKey}" data-wi="${i}" value="${esc(wk[fieldKey]||"")}" placeholder="${esc(LOAD_MODE_LABEL[mode])}">` : ""}
+            ${fieldKey && !activeRx ? `<input type="text" data-wf="${fieldKey}" data-wi="${i}" value="${esc(wk[fieldKey]||"")}" placeholder="${esc(LOAD_MODE_LABEL[mode])}">` : ""}
             <div class="rowdivider"></div>
             <div class="actualsummary" title="Logged per set by the client -- open Preview Client View to see or edit the full breakdown">${esc(summarizeLoggedSetsFor(program, refClientId, ex, i) || "—")}</div>
           </div>
@@ -2355,6 +2404,7 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
       </div>
       <div class="exrow-fields">
         <div class="exfield narrow"><label>Rest (sec)</label><input type="text" inputmode="numeric" data-f="restSeconds" value="${esc(ex.restSeconds||"")}" placeholder="90"></div>
+        ${fieldKey && activeRx ? `<div class="exfield narrow"><label>${esc(LOAD_MODE_LABEL[mode])} (${esc((refClient && refClient.name) || "this client")})</label><input type="text" data-rxf="${fieldKey}" value="${esc(resolvedIntensityValue(ex, fieldKey, refClientId, ex))}" placeholder="${esc(LOAD_MODE_PLACEHOLDER[mode])}"></div>` : ""}
         <div class="exfield notes" style="flex:1 1 100%;"><label>Notes</label><input type="text" data-f="notes" value="${esc(ex.notes||"")}" placeholder="e.g. safety squat bar, tempo 3-1-1, cue: chest up"></div>
       </div>
     `;
@@ -2362,9 +2412,15 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
     const select = buildLoadModeSelect(ex, mode);
     prescribeByWrap.appendChild(select);
     select.addEventListener("change", () => {
-      ex.loadMode = select.value;
+      writeLoadMode(select.value);
       onChange();
       renderEditor();
+    });
+
+    const rxInput = row.querySelector("input[data-rxf]");
+    if(rxInput) rxInput.addEventListener("input", () => {
+      writeRxValue(rxInput.dataset.rxf, rxInput.value);
+      onChange();
     });
 
     row.querySelectorAll("[data-wf]").forEach(inp => {
@@ -2425,7 +2481,11 @@ function groupKindOf(group){
 // the resulting group, not the control that built it). Clicking it toggles
 // whether `ex` (the exercise just above this control) is chained to
 // whichever exercise comes right after it in the same day.
-function buildLinkToggle(ex){
+// `onToggle` lets callers outside the Program Builder (e.g. the Rehab
+// editor, which has its own render/save functions) reuse this control --
+// it defaults to the Program Builder's own renderEditor/scheduleSave so
+// every existing call site keeps working unchanged.
+function buildLinkToggle(ex, onToggle){
   const wrap = document.createElement("div");
   wrap.className = "exlinktoggle";
   const linked = !!ex.linkedToNext;
@@ -2437,8 +2497,7 @@ function buildLinkToggle(ex){
     : "⛓ Link with the exercise below (superset/circuit)";
   btn.addEventListener("click", () => {
     ex.linkedToNext = !ex.linkedToNext;
-    renderEditor();
-    scheduleSave();
+    if(onToggle) onToggle(); else { renderEditor(); scheduleSave(); }
   });
   wrap.appendChild(btn);
   return wrap;
@@ -2607,11 +2666,11 @@ function buildPrintHTML(program, client){
         const prog = Array.isArray(ex.progression) && ex.progression.length === weeks ? ex.progression : progressionOf(ex, weeks);
         for(let i=0; i<weeks; i++){
           const wk = prog[i] || {};
-          const cell = loadIntensityCell(ex, wk);
+          const cell = loadIntensityCell(ex, wk, client && client.id);
           h += `<td>${esc(wk.sets||"")} × ${esc(wk.reps||"")}${cell ? ", " + esc(cell) : ""}</td>`;
         }
       } else {
-        h += `<td>${esc(ex.sets||"")}</td><td>${esc(ex.reps||"")}</td><td>${esc(loadIntensityCell(ex, ex))}</td>`;
+        h += `<td>${esc(ex.sets||"")}</td><td>${esc(ex.reps||"")}</td><td>${esc(loadIntensityCell(ex, ex, client && client.id))}</td>`;
       }
       h += `<td>${esc(ex.restSeconds ? ex.restSeconds + "s" : "")}</td><td>${esc(ex.notes||"")}</td></tr>`;
     });
@@ -4087,6 +4146,7 @@ function renderRehabEditor(){
           id: rid(), exercise: m.exercise, group: m.group, sub: m.sub, plane: m.plane,
           pattern: m.pattern, joint: m.joint, primary: m.primary, secondary: m.secondary,
           sets: "", reps: "", load: "", notes: "",
+          rpe: "", rir: "", loadMode: "", restSeconds: "", linkedToNext: false,
         }]);
         renderRehabEditor();
         scheduleCaseSave();
@@ -4122,6 +4182,7 @@ function renderRehabEditor(){
             id: rid(), exercise: m.exercise, group: m.group, sub: m.sub, plane: m.plane,
             pattern: m.pattern, joint: m.joint, primary: m.primary, secondary: m.secondary,
             sets: "", reps: "", load: "", notes: "",
+            rpe: "", rir: "", loadMode: "", restSeconds: "", linkedToNext: false,
           }]);
           addInput.value = "";
           closeAddResults();
@@ -4147,18 +4208,50 @@ function renderRehabEditor(){
     p.textContent = "Nothing added yet — use the suggestions above or the search box to build this client's plan.";
     wrap.appendChild(p);
   } else {
-    c.plan.forEach(ex => wrap.appendChild(buildExRow(
-      ex,
-      () => scheduleCaseSave(),
-      () => { c.plan = c.plan.filter(e => e.id !== ex.id); renderRehabEditor(); scheduleCaseSave(); },
-      (rec) => {
-        ex.exercise = rec.exercise; ex.group = rec.group; ex.sub = rec.sub; ex.plane = rec.plane;
-        ex.pattern = rec.pattern; ex.joint = rec.joint; ex.primary = rec.primary; ex.secondary = rec.secondary;
-        ex.notes = "";
-        renderRehabEditor();
-        scheduleCaseSave();
+    // Same superset/circuit grouping + Rest/RPE/RIR/%-mode row as the
+    // Program Builder -- a rehab case is just a flat plan array with no
+    // "weeks" concept, and buildProgExRow already falls back to its plain
+    // single-week layout for anything weeksCountFor() can't find weeks on,
+    // so it's reused as-is rather than duplicating that row markup here.
+    const plan = c.plan;
+    const planGroups = computeExerciseGroups({exercises: plan});
+    const planGroupInfoByExId = {};
+    let planGroupLetterCode = 65; // "A"
+    planGroups.forEach(group => {
+      const kind = groupKindOf(group);
+      const letter = kind ? String.fromCharCode(planGroupLetterCode++) : "";
+      group.forEach((ex, i) => { planGroupInfoByExId[ex.id] = {kind, letter, isFirst: i === 0, group}; });
+    });
+
+    plan.forEach((ex, idx) => {
+      const info = planGroupInfoByExId[ex.id];
+      if(info && info.kind && info.isFirst){
+        const label = document.createElement("div");
+        label.className = "exgrouplabel";
+        label.innerHTML = `<span>${esc(info.kind)} ${esc(info.letter)}</span> <button type="button" class="exgroup-ungroup">Ungroup</button>`;
+        label.querySelector(".exgroup-ungroup").addEventListener("click", () => {
+          info.group.forEach(member => { member.linkedToNext = false; });
+          renderRehabEditor();
+          scheduleCaseSave();
+        });
+        wrap.appendChild(label);
       }
-    )));
+      const row = buildProgExRow(
+        ex, c,
+        () => scheduleCaseSave(),
+        () => { c.plan = c.plan.filter(e => e.id !== ex.id); renderRehabEditor(); scheduleCaseSave(); },
+        (rec) => {
+          ex.exercise = rec.exercise; ex.group = rec.group; ex.sub = rec.sub; ex.plane = rec.plane;
+          ex.pattern = rec.pattern; ex.joint = rec.joint; ex.primary = rec.primary; ex.secondary = rec.secondary;
+          ex.notes = "";
+          renderRehabEditor();
+          scheduleCaseSave();
+        }
+      );
+      if(info && info.kind) row.classList.add("exrow-grouped");
+      wrap.appendChild(row);
+      if(idx < plan.length - 1) wrap.appendChild(buildLinkToggle(ex, () => { renderRehabEditor(); scheduleCaseSave(); }));
+    });
   }
 
   host.appendChild(wrap);
@@ -5858,7 +5951,7 @@ function buildClientExRow(ex, program, weeks, weekIndex, client, groupInfo){
   }
   const rxLabel = document.createElement("div");
   rxLabel.className = "cmrx";
-  rxLabel.textContent = `Target: ${wk.sets || "—"}×${wk.reps || "—"}${loadIntensityText(ex, wk)}`;
+  rxLabel.textContent = `Target: ${wk.sets || "—"}×${wk.reps || "—"}${loadIntensityText(ex, wk, client.id)}`;
   nowBox.appendChild(rxLabel);
 
   // Opt-in suggestion (see the program card's toggle) -- never shown for
@@ -5904,7 +5997,7 @@ function buildClientExRow(ex, program, weeks, weekIndex, client, groupInfo){
       earlierWeeks.slice().reverse().forEach(w => {
         const hr = document.createElement("div");
         hr.className = "cmweekhistoryrow";
-        const rx = `${w.sets || "—"}×${w.reps || "—"}${loadIntensityText(ex, w)}`;
+        const rx = `${w.sets || "—"}×${w.reps || "—"}${loadIntensityText(ex, w, client.id)}`;
         const logged = summarizeLoggedSetsFor(program, clientId, ex, w.weekIdx);
         // The prescribed exercise never changes -- ex.exercise is always
         // what was programmed -- so a swap that week is called out as its
@@ -6091,13 +6184,34 @@ function buildClientCaseCard(c){
   const card = document.createElement("div");
   card.className = "cmprogram";
   card.innerHTML = c.diagnosis ? `<div class="cmexnotes">${esc(c.diagnosis)}</div>` : "";
-  (c.plan || []).forEach(ex => {
+  const plan = c.plan || [];
+
+  // Same superset/circuit grouping the client sees on a Training program --
+  // a rehab plan is just a flat array so it's fed straight into the same
+  // computeExerciseGroups/groupKindOf helpers used by buildClientDayPill.
+  const groupInfoByExId = {};
+  let letterCode = 65; // "A"
+  computeExerciseGroups({exercises: plan}).forEach(group => {
+    const kind = groupKindOf(group);
+    const letter = kind ? String.fromCharCode(letterCode++) : "";
+    group.forEach((ex, i) => { groupInfoByExId[ex.id] = {kind, letter, isFirst: i === 0}; });
+  });
+
+  plan.forEach(ex => {
+    const info = groupInfoByExId[ex.id];
     const row = document.createElement("div");
-    row.className = "cmexrow";
-    row.innerHTML = `<div class="cmexname">${esc(ex.exercise)}</div><div>${esc(ex.sets||"—")} sets × ${esc(ex.reps||"—")} reps${ex.load ? " @ "+esc(ex.load) : ""}</div>${ex.notes ? `<div class="cmexnotes">${esc(ex.notes)}</div>` : ""}`;
+    row.className = "cmexrow" + (info && info.kind ? " cmexrow-grouped" : "");
+    const groupLabelHtml = (info && info.kind && info.isFirst)
+      ? `<div class="cmexgrouplabel">${esc(info.kind)} ${esc(info.letter)}</div>` : "";
+    // Rehab has no per-set logging, so intensity is shown the same way it
+    // reads on a print-out ("3 sets x 10 reps (RPE 7)") rather than the
+    // per-set target/logged rows a Training exercise gets.
+    row.innerHTML = `${groupLabelHtml}<div class="cmexname">${esc(ex.exercise)}</div><div>${esc(ex.sets||"—")} sets × ${esc(ex.reps||"—")} reps${esc(loadIntensityText(ex, ex))}</div>${ex.notes ? `<div class="cmexnotes">${esc(ex.notes)}</div>` : ""}`;
+    const restSecs = parseInt(ex.restSeconds, 10) || 0;
+    if(restSecs > 0) row.appendChild(buildRestTimerControl(ex, "rehab", 0));
     card.appendChild(row);
   });
-  if(!(c.plan || []).length){
+  if(!plan.length){
     const p = document.createElement("div");
     p.className = "cmempty";
     p.textContent = "No exercises added to this plan yet.";
