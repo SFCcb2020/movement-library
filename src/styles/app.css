@@ -224,6 +224,41 @@ footer{margin-top:34px; text-align:center; color:var(--ink-dim); font-size:12.5p
 .clientsearch{font-family:inherit; font-size:13px; border:1px solid var(--line); border-radius:8px; padding:7px 10px; background:var(--bg); color:var(--ink); min-width:220px;}
 .statscope{font-size:10.5px; text-transform:none; letter-spacing:0; font-weight:500; color:var(--ink-dim);}
 
+/* Program Builder's multi-client (group program) picker */
+.multiclientpicker{flex-direction:column; align-items:flex-start; gap:8px;}
+.clientchiprow{display:flex; flex-wrap:wrap; gap:6px; align-items:center;}
+.clientpickerempty{font-size:12.5px; color:var(--ink-dim); font-style:italic;}
+.multiclientpicker .clientchip{display:inline-flex; align-items:center; gap:6px;}
+.clientchipremove{border:none; background:transparent; color:inherit; opacity:.7; cursor:pointer; font-size:11px; padding:0; line-height:1;}
+.clientchipremove:hover{opacity:1;}
+.clientpickersearch{position:relative;}
+
+.refclientrow{margin-top:-4px;}
+.refclientrow select{
+  font-family:inherit; font-size:12.5px; border:1px solid var(--line); border-radius:8px;
+  padding:6px 10px; background:var(--bg); color:var(--ink);
+}
+
+.privatetag{
+  display:inline-block; margin-left:8px; font-size:9.5px; font-weight:700; text-transform:uppercase;
+  letter-spacing:.03em; color:var(--coral); background:var(--coral-soft); border-radius:999px; padding:2px 7px;
+  vertical-align:middle;
+}
+.coachnotesfield{flex:1 1 100%; margin-top:10px;}
+
+.proglistclients{display:block; font-size:11px; color:var(--select); margin-top:2px;}
+
+/* Client goals history -- "Past goals", shown on both the client's own
+   Big Picture Goals pill and the coach's Client Profile page. */
+.goalshistory{margin-top:8px;}
+.goalshistory summary{cursor:pointer; font-size:11.5px; font-weight:600; color:var(--ink-dim); padding:2px 0; list-style:none;}
+.goalshistory summary::-webkit-details-marker{display:none;}
+.goalshistory summary:hover{color:var(--ink);}
+.goalshistory summary::before{content:"▸ "; font-size:10px;}
+.goalshistory[open] summary::before{content:"▾ ";}
+.goalshistoryrow{font-size:11.5px; color:var(--ink-dim); padding:3px 0 3px 12px; display:flex; gap:8px;}
+.goalshistorydate{flex:none; font-weight:600; color:var(--ink);}
+
 .clientlinklist{display:flex; flex-direction:column; gap:8px; margin-bottom:8px;}
 .clientlinkcard{
   background:var(--surface-2); border-radius:8px; padding:10px 14px; display:flex; align-items:center;
