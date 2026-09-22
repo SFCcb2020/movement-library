@@ -602,6 +602,12 @@ footer{margin-top:34px; text-align:center; color:var(--ink-dim); font-size:12.5p
 .cmsuggesttogglelabel input{width:15px; height:15px; margin:0; cursor:pointer; accent-color:var(--select);}
 .visibilitytoggles{display:flex; flex-direction:column; gap:6px; margin-bottom:12px;}
 .visibilitytoggles .cmsuggesttogglelabel{margin-bottom:0;}
+
+/* Client Profile page (THE SQUAD tab): Goals and Coach Notes shown side by
+   side as two pills sharing one row, per the coach's own layout request --
+   wraps to stacked on a narrow screen since each pill has a sane min-width. */
+.clientprofilerow{display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start;}
+.clientprofilerow > .cmpill{flex:1 1 300px; min-width:260px;}
 .cmweeknow .cmsuggest{
   flex:0 0 100%; font-size:12px; font-weight:600; color:var(--select); background:var(--select-soft);
   border-radius:6px; padding:6px 9px; margin-top:2px;
