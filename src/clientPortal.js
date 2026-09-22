@@ -90,3 +90,39 @@ export async function getRehabCasesForCode(code) {
 export async function getNutritionPlansForCode(code) {
   return callForCode("get_nutrition_plans_for_code", code);
 }
+
+// Messages don't fit callForCode's generic shape (no `name` column, and the
+// ordering created_at needs to survive the round-trip as createdAt) so this
+// gets its own small mapper instead.
+export async function getMessagesForCode(code) {
+  const { data, error } = await supabase.rpc("get_messages_for_code", {
+    p_code: (code || "").trim().toUpperCase(),
+  });
+  if (error) throw error;
+  return (data || []).map((row) =>
+    Object.assign({ id: row.id, clientId: row.client_id, createdAt: row.created_at }, row.doc)
+  );
+}
+
+// Sends a message as the client and hands back the row that was actually
+// inserted (server-generated id/timestamp), so the UI can show it
+// immediately without waiting on the next poll.
+export async function sendMessageForCode(code, body) {
+  const { data, error } = await supabase.rpc("send_message_for_code", {
+    p_code: (code || "").trim().toUpperCase(),
+    p_body: body,
+  });
+  if (error) throw error;
+  const row = data && data[0];
+  if (!row) return null;
+  return Object.assign({ id: row.id, clientId: row.client_id, createdAt: row.created_at }, row.doc);
+}
+
+// Marks every message the COACH sent in this client's thread as read --
+// called when the client opens their Messages pill.
+export async function markCoachMessagesReadForCode(code) {
+  const { error } = await supabase.rpc("mark_coach_messages_read_for_code", {
+    p_code: (code || "").trim().toUpperCase(),
+  });
+  if (error) throw error;
+}
