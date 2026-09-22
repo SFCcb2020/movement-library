@@ -86,13 +86,20 @@ export async function getProgramsForCode(code) {
 // Persists a client's own logged sets (reps/weight per set, for progressive
 // overload carry-over) back to their program. Previously a client could
 // only READ their program -- whatever they logged lived in the browser tab
-// only and vanished on reload. Scoped server-side to just the `days` tree,
-// and only for a program that's confirmed to belong to this access code.
-export async function saveProgramActualsForCode(code, programId, days) {
-  const { error } = await supabase.rpc("update_program_actuals_for_code", {
+// only and vanished on reload.
+//
+// A program can now be shared by several clients (a group program), so this
+// no longer overwrites the whole `days` tree -- that would stomp another
+// member's logged sets, or the coach's own prescription edits, if two
+// people saved around the same time. `actuals` is just THIS client's own
+// slice (program.actualsByClient[thisClientId], built app-side) and the
+// server writes it to only that one spot, scoped to a program confirmed to
+// be assigned to this access code.
+export async function saveProgramActualsForCode(code, programId, actuals) {
+  const { error } = await supabase.rpc("save_program_actuals_for_code", {
     p_code: (code || "").trim().toUpperCase(),
     p_program_id: programId,
-    p_days: days,
+    p_actuals: actuals,
   });
   if (error) throw error;
 }
