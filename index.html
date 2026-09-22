@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Strong Friends Club</title>
+<title>STRONG FRIENDS CLUB</title>
 <meta name="description" content="Coaching dashboard, exercise library, and client portal for Strong Friends Club.">
 
 <!-- PWA: makes the app installable to a phone's home screen -->
@@ -20,7 +20,7 @@
 <body>
 
 <div class="wrap">
-  <h1>Strong Friends Club</h1>
+  <h1>STRONG FRIENDS CLUB</h1>
 
   <div id="gateLoading" class="gateloading" hidden>Loading…</div>
 
@@ -45,6 +45,7 @@
     <button class="tabbtn" id="tabbtn-rehab" type="button">Rehab</button>
     <button class="tabbtn" id="tabbtn-nutrition" type="button">Nutrition</button>
     <button class="tabbtn" id="tabbtn-clients" type="button">THE SQUAD</button>
+    <button class="tabbtn" id="tabbtn-messages" type="button">Messages</button>
   </div>
 
   <div class="tabpanel active" id="tabpanel-library">
@@ -112,6 +113,17 @@
         <div id="clientListEl"></div>
       </div>
       <div id="clientHost"></div>
+    </div>
+  </div>
+
+  <div class="tabpanel" id="tabpanel-messages">
+    <div id="dbnoteMessages" class="dbnote" hidden></div>
+    <div class="builder-layout">
+      <div class="proglist">
+        <h2>Messages</h2>
+        <div id="messageThreadListEl"></div>
+      </div>
+      <div id="messagesHost"></div>
     </div>
   </div>
 
