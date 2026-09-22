@@ -77,8 +77,31 @@
         <input type="text" class="enquirefield" id="enquireName" placeholder="Name" autocomplete="name" required>
         <input type="email" class="enquirefield" id="enquireEmail" placeholder="Email" autocomplete="email" required>
         <input type="tel" class="enquirefield" id="enquirePhone" placeholder="Phone (optional)" autocomplete="tel">
+        <input type="text" class="enquirefield" id="enquireInstagram" placeholder="Instagram handle (this is where you'll likely hear from me, so check your message requests!)" autocomplete="off">
         <textarea class="enquirefield enquiretextarea" id="enquireGoals" placeholder="What are you hoping to work on or achieve?" rows="3"></textarea>
         <textarea class="enquirefield enquiretextarea" id="enquireExperience" placeholder="What's your current training experience?" rows="3"></textarea>
+        <textarea class="enquirefield enquiretextarea" id="enquireStruggle" placeholder="What would you say your biggest struggle with training, nutrition, or your mindset around it all has been recently?" rows="3"></textarea>
+
+        <fieldset class="enquirefield enquirefieldset">
+          <legend>If you could achieve 1 thing over the next 90 days, what would be your priority?</legend>
+          <label class="enquirechoicerow"><input type="radio" name="enquirePriority" value="Get stronger"> Get stronger</label>
+          <label class="enquirechoicerow"><input type="radio" name="enquirePriority" value="Gain an understanding around nutrition &amp; fuel myself well"> Gain an understanding around nutrition &amp; fuel myself well</label>
+          <label class="enquirechoicerow"><input type="radio" name="enquirePriority" value="Gain confidence in the gym and training"> Gain confidence in the gym and training</label>
+          <label class="enquirechoicerow"><input type="radio" name="enquirePriority" value="Change my body composition - lose body fat"> Change my body composition - lose body fat</label>
+          <label class="enquirechoicerow"><input type="radio" name="enquirePriority" value="Change my body composition - gain muscle"> Change my body composition - gain muscle</label>
+        </fieldset>
+
+        <fieldset class="enquirefield enquirefieldset">
+          <legend>What coaching set up are you interested in? (choose as many as you like)</legend>
+          <label class="enquirechoicerow"><input type="checkbox" name="enquireCoachingSetup" value="Online 1-2-1: Tailored Individual Gym Programming & Nutrition Coaching"> Online 1-2-1: Tailored Individual Gym Programming &amp; Nutrition Coaching</label>
+          <label class="enquirechoicerow"><input type="checkbox" name="enquireCoachingSetup" value="In-person 1-2-1 Coaching Sessions"> In-person 1-2-1 Coaching Sessions</label>
+          <label class="enquirechoicerow"><input type="checkbox" name="enquireCoachingSetup" value="Online 1-2-1: Nutrition Coaching only"> Online 1-2-1: Nutrition Coaching only</label>
+          <label class="enquirechoicerow"><input type="checkbox" name="enquireCoachingSetup" value="The Strong Squad's Online Group Program"> The Strong Squad's Online Group Program</label>
+        </fieldset>
+
+        <textarea class="enquirefield enquiretextarea" id="enquireTriedCoach" placeholder="Have you tried working with a coach before? If yes, please give some details!" rows="3"></textarea>
+        <textarea class="enquirefield enquiretextarea" id="enquireAnythingElse" placeholder="Is there anything you think I should know that would best help me help you, or have any questions I can answer when I get in touch?" rows="3"></textarea>
+
         <button type="submit" class="gatesubmit" id="enquireSubmitBtn">Submit</button>
       </form>
       <div class="gateerror" id="enquireStatus"></div>
