@@ -2,6 +2,14 @@ const BUILTIN_DATA = [{"exercise":"Barbell Hip Thrust","demoUrl":"https://www.yo
 let DATA = BUILTIN_DATA;
 let customExercises = [];
 let customCol = null;
+// Movement Library's "queue to program" list: exercises picked while
+// browsing/searching, held here (session-only, not saved to the database)
+// until "Create Program from Queue" turns them into a real Day 1 in a new
+// program. Matched by exercise+sub so the same movement in different
+// filtered views is recognized as already-queued rather than duplicated.
+let programQueue = [];
+function queueKey(r){ return (r.exercise||"") + "|||" + (r.sub||""); }
+function isQueued(r){ return programQueue.some(q => queueKey(q) === queueKey(r)); }
 let clientsCol = null;
 let clientsCache = [];
 let clientSaveTimers = {}; // client id -> pending debounce timer handle (per-client, so editing client A then quickly clicking to client B never cancels A's pending save)
@@ -236,6 +244,7 @@ function render(){
   results.sort((a,b) => a.exercise.localeCompare(b.exercise));
   results.forEach(r => {
     const meta = REGION_META[r.region] || {var:"--accent"};
+    const queued = isQueued(r);
     const card = document.createElement("div");
     card.className = "card";
     card.style.setProperty("--card-accent", `var(${meta.var})`);
@@ -255,11 +264,100 @@ function render(){
       <div class="detail"><b>Joint action</b>${esc(r.joint)}</div>
       <div class="detail"><b>Primary mover(s)</b>${esc(r.primary)}</div>
       <div class="detail"><b>Secondary mover(s)</b>${esc(r.secondary)}</div>
+      <button type="button" class="queuebtn${queued ? " queued" : ""}">${queued ? "✓ Queued for Program" : "+ Queue to Program"}</button>
     `;
+    card.querySelector(".queuebtn").addEventListener("click", () => {
+      if(isQueued(r)) programQueue = programQueue.filter(q => queueKey(q) !== queueKey(r));
+      else programQueue = programQueue.concat([r]);
+      render();
+      renderProgramQueueBar();
+    });
     grid.appendChild(card);
   });
   resultsEl.innerHTML = "";
   resultsEl.appendChild(grid);
+}
+
+// The "Program Queue" strip pinned above the results grid: shows every
+// exercise queued so far (across any number of searches/filters), each
+// removable on its own, plus the button that turns the whole list into a
+// new program's Day 1. Session-only -- nothing here is saved until Create
+// Program from Queue actually builds a program out of it.
+function renderProgramQueueBar(){
+  const bar = document.getElementById("programQueueBar");
+  if(!bar) return;
+  if(!programQueue.length){
+    bar.innerHTML = "";
+    bar.hidden = true;
+    return;
+  }
+  bar.hidden = false;
+  bar.innerHTML = `
+    <div class="queuebarhead">
+      <span class="queuebartitle">Program Queue (${programQueue.length})</span>
+      <button type="button" class="generatebtn queuecreatebtn">Create Program from Queue</button>
+      <button type="button" class="clearbtn queueclearbtn">Clear Queue</button>
+    </div>
+    <div class="queuebarlist">
+      ${programQueue.map(r => `<span class="queuechip">${esc(r.exercise)} <button type="button" class="queuechipremove" data-key="${esc(queueKey(r))}" title="Remove from queue">✕</button></span>`).join("")}
+    </div>
+  `;
+  bar.querySelectorAll(".queuechipremove").forEach(btn => {
+    btn.addEventListener("click", () => {
+      programQueue = programQueue.filter(q => queueKey(q) !== btn.dataset.key);
+      render();
+      renderProgramQueueBar();
+    });
+  });
+  bar.querySelector(".queuecreatebtn").addEventListener("click", createProgramFromQueue);
+  bar.querySelector(".queueclearbtn").addEventListener("click", () => {
+    programQueue = [];
+    render();
+    renderProgramQueueBar();
+  });
+}
+
+// Turns the queue into a brand-new program's Day 1 (sets/reps/load start
+// blank, exactly like adding an exercise to a day by hand in the builder),
+// then opens it there ready to add more days, sets/reps, or assign to a
+// client. Mirrors the "+ New Program" button's own save handling exactly,
+// so it works the same whether or not the coach has ever opened the
+// Program Builder tab yet this visit.
+async function createProgramFromQueue(){
+  if(!programQueue.length) return;
+  showTab("builder");
+  await ensureBuilderInited();
+  const queued = programQueue;
+  programQueue = [];
+  renderProgramQueueBar();
+  render();
+  const now = new Date().toISOString();
+  const days = [{
+    id: rid(), label: "Day 1",
+    exercises: queued.map(r => ({
+      id: rid(), exercise: r.exercise, group: r.group, sub: r.sub, plane: r.plane,
+      pattern: r.pattern, joint: r.joint, primary: r.primary, secondary: r.secondary,
+      sets: "", reps: "", load: "", notes: "",
+    })),
+  }];
+  const data = {name: "New Program (from Queue)", days, weeks: 1, goal: "", coachNotes: "", liftStats: [], weightUnit: "kg", clientIds: [], createdAt: now, updatedAt: now};
+  showAutoBuildForm = false;
+  if(!programsCol){
+    const id = "local-" + rid();
+    const rec = Object.assign({id}, data);
+    programsCache.unshift(rec);
+    currentId = id; currentProgram = JSON.parse(JSON.stringify(rec));
+    renderProgramList(); renderEditor();
+    return;
+  }
+  try{
+    const ref = await programsCol.add(data);
+    currentId = ref.id;
+    currentProgram = Object.assign({id: ref.id}, data);
+    renderProgramList(); renderEditor();
+  }catch(e){
+    flashNote("Couldn't create a new program right now (" + e.code + "). Try again in a moment.");
+  }
 }
 
 document.getElementById("q").addEventListener("input", e => {
@@ -482,10 +580,36 @@ const SUBS = {
   messages: "Chat with your clients right from the app — no phone number needed on either side.",
 };
 let builderInited = false;
+let builderInitPromise = null;
+let builderReadyResolve = null;
 let rehabInited = false;
 let clientsTabInited = false;
 let nutritionInited = false;
 let messagesInited = false;
+
+// Kicks off (once) and hands back a promise for the builder tab's db
+// subscription -- needed by anything that wants to create/save a program
+// from OUTSIDE the builder tab (e.g. the Movement Library's "Create
+// Program from Queue") without racing initBuilder()'s own async setup: if
+// programsCol isn't set yet when that code runs, it would silently fall
+// back to a "local-" in-memory program that the builder's first real
+// snapshot then wipes out from under it.
+function ensureBuilderInited(){
+  if(!builderInited){
+    builderInited = true;
+    // Resolves once the FIRST programs snapshot has actually landed (not
+    // just once initBuilder's own synchronous setup has run) -- otherwise
+    // a caller like createProgramFromQueue could create+select a new
+    // program while that first background fetch is still in flight, and
+    // have it land afterward with pre-creation data, wiping the
+    // just-created program's selection back out.
+    builderInitPromise = new Promise(resolve => {
+      builderReadyResolve = resolve;
+      initBuilder();
+    });
+  }
+  return builderInitPromise || Promise.resolve();
+}
 
 function showTab(name){
   Object.keys(tabBtns).forEach(k => {
@@ -493,9 +617,8 @@ function showTab(name){
     tabPanels[k].classList.toggle("active", k === name);
   });
   pageSub.textContent = SUBS[name];
-  if(name === "builder" && !builderInited){
-    builderInited = true;
-    initBuilder();
+  if(name === "builder"){
+    ensureBuilderInited();
   }
   if(name === "rehab" && !rehabInited){
     rehabInited = true;
@@ -800,10 +923,17 @@ async function initBuilder(){
     flashNote("Saving isn't wired up in this preview, so programs you build here won't be kept — open the published page itself to save for real.");
     renderProgramList();
     renderEditor();
+    if(builderReadyResolve){ builderReadyResolve(); builderReadyResolve = null; }
     return;
   }
 
   programsCol = db.collection("programs");
+  let firstSnapshotSeen = false;
+  function markBuilderReady(){
+    if(firstSnapshotSeen) return;
+    firstSnapshotSeen = true;
+    if(builderReadyResolve){ builderReadyResolve(); builderReadyResolve = null; }
+  }
   programsCol.orderBy("updatedAt", "desc").limit(200).onSnapshot(snap => {
     programsCache = snap.docs.map(d => Object.assign({id: d.id}, d.data()));
     renderProgramList();
@@ -812,8 +942,10 @@ async function initBuilder(){
     }
     safeRenderClientProfile();
     safeRenderClientModeView();
+    markBuilderReady();
   }, err => {
     flashNote("Couldn't load your saved programs (" + err.code + "). You can still build one, but it may not save.");
+    markBuilderReady();
   });
 }
 
@@ -3499,7 +3631,7 @@ function openNutritionFromClient(plan){
 function initClientsTab(){
   // Pull in program/rehab/nutrition data (normally lazy, per-tab) so the
   // consolidated view is accurate even if the coach opens Clients first.
-  if(!builderInited){ builderInited = true; initBuilder(); }
+  ensureBuilderInited();
   if(!rehabInited){ rehabInited = true; initRehab(); }
   if(!nutritionInited){ nutritionInited = true; initNutrition(); }
   if(!messagesInited){ messagesInited = true; initMessages(); }
