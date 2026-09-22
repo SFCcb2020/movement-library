@@ -48,6 +48,10 @@ let cmProgramWeekIndex = {};
 // Which exercises currently have their "earlier weeks" reference list
 // expanded, keyed by exercise id.
 let cmWeekHistoryOpenIds = new Set();
+// Which clients currently have their goals "Past goals" history expanded,
+// keyed by client id -- shown on both the client's own Big Picture Goals
+// pill and the coach's Client Profile page.
+let cmGoalsHistoryOpenIds = new Set();
 
 // Task-adding is a two-step "pick, then Save" flow (see renderClientProfile):
 // nothing lands on the client's real task list until the coach hits the
@@ -735,6 +739,38 @@ let currentProgram = null;
 let saveTimer = null;
 let showAutoBuildForm = false;
 
+// A program can be assigned to more than one client at once (a group
+// program): everyone assigned shares the same exercise/sets/reps
+// prescription but logs their own actual reps/weight separately (see
+// program.actualsByClient, further down). `clientIds` is the array that
+// replaced the old single `clientId` field; these two helpers are the only
+// places that need to know both shapes exist, so every other call site can
+// just ask "who's on this program" / "is this person on it" without caring
+// whether it's an old program saved before group programs existed.
+function programClientIds(program){
+  if(program && Array.isArray(program.clientIds) && program.clientIds.length) return program.clientIds;
+  if(program && program.clientId) return [program.clientId];
+  return [];
+}
+function programHasClient(program, clientId){
+  return !!clientId && programClientIds(program).includes(clientId);
+}
+
+// Which assigned client's own progress the Program Builder is currently
+// referencing -- drives Apply Progression's %1RM lookup, Update from
+// Actuals, the read-only "Logged" column, and Print, all of which need ONE
+// specific person's numbers even when several clients share this program.
+// Keyed by program id; defaults to the first assigned client (see
+// builderRefClientIdFor below) until the coach picks someone else.
+let builderRefClientId = {};
+function builderRefClientIdFor(program){
+  const ids = programClientIds(program);
+  if(!ids.length) return null;
+  const saved = builderRefClientId[program.id];
+  if(saved && ids.includes(saved)) return saved;
+  return ids[0];
+}
+
 function flashNote(msg, targetId){
   const note = document.getElementById(targetId || "dbnote");
   note.hidden = false;
@@ -794,9 +830,11 @@ function renderProgramList(){
     const days = p.days || [];
     const exCount = days.reduce((n, d) => n + (d.exercises ? d.exercises.length : 0), 0);
     const weeks = weeksCountFor(p);
+    const assignedNames = programClientIds(p).map(id => clientsCache.find(c => c.id === id)).filter(Boolean).map(c => c.name || "Unnamed client");
     const div = document.createElement("div");
     div.className = "progitem" + (p.id === currentId ? " active" : "");
-    div.innerHTML = `${esc(p.name || "Untitled Program")}<span class="meta">${weeks > 1 ? fmtCount(weeks,"week") + " · " : ""}${fmtCount(days.length,"day")} · ${fmtCount(exCount,"exercise")}</span>`;
+    div.innerHTML = `${esc(p.name || "Untitled Program")}<span class="meta">${weeks > 1 ? fmtCount(weeks,"week") + " · " : ""}${fmtCount(days.length,"day")} · ${fmtCount(exCount,"exercise")}</span>` +
+      (assignedNames.length ? `<span class="proglistclients">${esc(assignedNames.join(", "))}</span>` : "");
     div.onclick = () => {
       currentId = p.id;
       currentProgram = JSON.parse(JSON.stringify(p));
@@ -810,7 +848,7 @@ function renderProgramList(){
 document.getElementById("newProgramBtn").addEventListener("click", async () => {
   showAutoBuildForm = false;
   const now = new Date().toISOString();
-  const data = {name: "New Program", days: [], weeks: 1, goal: "", liftStats: [], weightUnit: "kg", clientId: null, createdAt: now, updatedAt: now};
+  const data = {name: "New Program", days: [], weeks: 1, goal: "", coachNotes: "", liftStats: [], weightUnit: "kg", clientIds: [], createdAt: now, updatedAt: now};
   if(!programsCol){
     const id = "local-" + rid();
     const rec = Object.assign({id}, data);
@@ -842,7 +880,13 @@ function scheduleSave(){
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
     if(!currentProgram) return;
-    const payload = {name: currentProgram.name, days: currentProgram.days, weeks: currentProgram.weeks||1, goal: currentProgram.goal||"", liftStats: currentProgram.liftStats||[], weightUnit: currentProgram.weightUnit||"kg", clientId: currentProgram.clientId||null, updatedAt: new Date().toISOString()};
+    // actualsByClient is deliberately left out of this payload -- the coach
+    // never edits it herself (it's a read-only "Logged" summary in her
+    // builder), and update_program_doc's merge is a shallow `doc || patch`,
+    // so leaving it out means her save can never clobber a client's own
+    // just-logged set with a stale in-memory copy from when she opened this
+    // program. Clients write it themselves via save_program_actuals_for_code.
+    const payload = {name: currentProgram.name, days: currentProgram.days, weeks: currentProgram.weeks||1, goal: currentProgram.goal||"", coachNotes: currentProgram.coachNotes||"", liftStats: currentProgram.liftStats||[], weightUnit: currentProgram.weightUnit||"kg", clientIds: programClientIds(currentProgram), updatedAt: new Date().toISOString()};
     const badgeEl = document.getElementById("saveBadge");
     if(programsCol && !String(currentId).startsWith("local-")){
       try{
@@ -865,10 +909,14 @@ async function duplicateProgram(){
   const now = new Date().toISOString();
   const copy = {
     name: (currentProgram.name || "Untitled Program") + " (copy)",
+    // Deliberately NOT carrying over actualsByClient -- a duplicate is a
+    // fresh copy of the prescription, not a copy of anyone's logged
+    // workouts, so it starts with a clean slate the same way it would if
+    // there were no actuals feature at all.
     days: JSON.parse(JSON.stringify(currentProgram.days || [])),
-    weeks: currentProgram.weeks || 1, goal: currentProgram.goal || "",
+    weeks: currentProgram.weeks || 1, goal: currentProgram.goal || "", coachNotes: currentProgram.coachNotes || "",
     liftStats: JSON.parse(JSON.stringify(currentProgram.liftStats || [])), weightUnit: currentProgram.weightUnit || "kg",
-    clientId: currentProgram.clientId || null,
+    clientIds: programClientIds(currentProgram).slice(),
     createdAt: now, updatedAt: now,
   };
   if(programsCol){
@@ -1290,45 +1338,84 @@ function prescribedSetCount(wk){
   return Math.max(1, parseInt(wk && wk.sets, 10) || 1);
 }
 
-// Read-only view of a week's logged sets: the new actualSets array if it
-// exists, otherwise the old single actualReps/actualWeight fields (from
-// before per-set logging existed) folded into a one-entry array -- without
-// writing anything back. Used for display (history, the coach's grid) where
-// a week that isn't currently being edited should never get silently
-// mutated just because someone looked at it.
-function actualSetsOf(wk){
-  if(Array.isArray(wk && wk.actualSets)) return wk.actualSets;
-  if(wk && (wk.actualReps || wk.actualWeight)) return [{reps: wk.actualReps || "", weight: wk.actualWeight || ""}];
+// ---------------------------------------------------------------------
+// Per-client actual-set logging.
+//
+// A program's exercises/sets/reps (ex.progression) are the shared
+// PRESCRIPTION -- identical for everyone assigned to a group program. What
+// each person actually lifted has to live separately per client, or two
+// people sharing a program would overwrite each other's logged sets. That
+// lives at program.actualsByClient[clientId][exerciseId][weekIndex] = an
+// array of {reps, weight} entries, one per set -- completely outside the
+// days/progression tree, so logging a workout can never touch the shared
+// prescription (and vice versa).
+//
+// Old single-client programs (saved before this existed) still have their
+// logged sets sitting inline at ex.progression[weekIndex].actualSets --
+// getClientActuals falls back to reading that legacy spot for a program
+// with exactly one assigned client (the only case where "whose data is
+// this" is unambiguous), so nobody's history disappears.
+// ---------------------------------------------------------------------
+
+function getClientActuals(program, clientId, ex, weekIndex){
+  const byClient = program && program.actualsByClient && clientId ? program.actualsByClient[clientId] : null;
+  const byEx = byClient && ex && ex.id ? byClient[ex.id] : null;
+  const arr = byEx ? byEx[weekIndex] : null;
+  if(Array.isArray(arr)) return arr;
+
+  // Legacy fallback -- only when there's no ambiguity about whose data it is.
+  const ids = programClientIds(program);
+  if(clientId && ids.length === 1 && ids[0] === clientId){
+    const wk = ex && ex.progression && ex.progression[weekIndex];
+    if(Array.isArray(wk && wk.actualSets)) return wk.actualSets;
+    if(wk && (wk.actualReps || wk.actualWeight)) return [{reps: wk.actualReps || "", weight: wk.actualWeight || ""}];
+  }
   return [];
 }
 
-// Ensures wk.actualSets exists with at least the prescribed number of
-// entries -- this is the "about to render editable inputs for this week"
-// path, so (unlike actualSetsOf above) it's expected to migrate and persist
-// the legacy fields into the new shape rather than losing them.
-function ensureActualSets(wk){
-  let arr = actualSetsOf(wk);
+// Writes one client's logged sets for one exercise/week back onto the
+// program object in memory (persisting is the caller's job -- see
+// scheduleClientProgramActualsSave). Reassigns each level of the map
+// rather than mutating in place, since any of it may still be the
+// frozen/read-only object a db snapshot handed back.
+function setClientActuals(program, clientId, ex, weekIndex, setsArr){
+  const byClient = Object.assign({}, program.actualsByClient || {});
+  const byEx = Object.assign({}, byClient[clientId] || {});
+  const perWeek = (byEx[ex.id] || []).slice();
+  perWeek[weekIndex] = setsArr;
+  byEx[ex.id] = perWeek;
+  byClient[clientId] = byEx;
+  program.actualsByClient = byClient;
+}
+
+// Ensures this client has at least the prescribed number of set-entries
+// logged for this exercise/week -- the "about to render editable inputs"
+// path, so (unlike getClientActuals above) it's expected to migrate a
+// legacy entry into the new shape and persist it rather than just reading
+// it.
+function ensureClientActualSets(program, clientId, ex, weekIndex){
+  if(!ex.id) ex.id = rid(); // safety net for any older exercise saved before ids were added
+  const wk = ex.progression && ex.progression[weekIndex];
+  let arr = getClientActuals(program, clientId, ex, weekIndex);
   const needed = prescribedSetCount(wk);
   if(arr.length < needed){
-    // Reassign rather than push -- same read-only/frozen-array concern as
-    // ex.progression above.
     const extra = [];
     while(arr.length + extra.length < needed) extra.push({reps: "", weight: ""});
     arr = arr.concat(extra);
   }
-  wk.actualSets = arr;
+  setClientActuals(program, clientId, ex, weekIndex, arr);
   return arr;
 }
 
-function hasLoggedAnySet(wk){
-  return actualSetsOf(wk).some(s => s && (s.reps || s.weight));
+function hasLoggedAnySetFor(program, clientId, ex, weekIndex){
+  return getClientActuals(program, clientId, ex, weekIndex).some(s => s && (s.reps || s.weight));
 }
 
-// A compact "Set 1: 9 @ 60kg, Set 2: 8 @ 60kg" readout of what was actually
-// logged for a week -- shared by the client's "Earlier weeks" history and
-// the coach's own week-by-week builder grid.
-function summarizeLoggedSets(wk){
-  return actualSetsOf(wk)
+// A compact "Set 1: 9 @ 60kg, Set 2: 8 @ 60kg" readout of what one client
+// actually logged for a week -- shared by the client's "Earlier weeks"
+// history and the coach's own week-by-week builder grid.
+function summarizeLoggedSetsFor(program, clientId, ex, weekIndex){
+  return getClientActuals(program, clientId, ex, weekIndex)
     .map((s, idx) => (s && (s.reps || s.weight)) ? `Set ${idx + 1}: ${s.reps || "—"}${s.weight ? " @ " + s.weight : ""}` : null)
     .filter(Boolean)
     .join(", ");
@@ -1358,7 +1445,11 @@ function updateFromActuals(){
   const weeks = weeksCountFor(currentProgram);
   if(weeks <= 1) return;
   const goalProfile = detectGoalProfile(currentProgram.goal);
-  const linkedClient = currentProgram.clientId ? clientsCache.find(c => c.id === currentProgram.clientId) : null;
+  // With a group program, "actual performance" has to mean ONE specific
+  // person's -- the coach's "Referencing progress for" picker (defaults to
+  // the only/first assigned client) says whose.
+  const refClientId = builderRefClientIdFor(currentProgram);
+  const linkedClient = refClientId ? clientsCache.find(c => c.id === refClientId) : null;
 
   (currentProgram.days||[]).forEach(day => (day.exercises||[]).forEach(ex => {
     if(!Array.isArray(ex.progression) || !ex.progression.length) return;
@@ -1366,7 +1457,7 @@ function updateFromActuals(){
     // Find the last week with at least one logged set.
     let w = -1;
     for(let i=0; i<ex.progression.length; i++){
-      if(hasLoggedAnySet(ex.progression[i])) w = i;
+      if(hasLoggedAnySetFor(currentProgram, refClientId, ex, i)) w = i;
     }
     if(w === -1 || w >= weeks - 1) return;
 
@@ -1374,7 +1465,7 @@ function updateFromActuals(){
     // Progressive overload reads off the LAST logged set that week -- for a
     // straight-sets prescription that's the final working set, which best
     // reflects whether the prescribed weight is still challenging enough.
-    const loggedSets = actualSetsOf(wk).filter(s => s && (s.reps || s.weight));
+    const loggedSets = getClientActuals(currentProgram, refClientId, ex, w).filter(s => s && (s.reps || s.weight));
     const lastSet = loggedSets[loggedSets.length - 1] || {};
     const actualReps = parseInt(lastSet.reps, 10);
     const actualWeight = parseFloat(lastSet.weight);
@@ -1474,6 +1565,11 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
     });
   } else {
     const prog = progressionOf(ex, weeks);
+    // A group program shares one prescription but each client logs their
+    // own sets -- this read-only column can only show one person's log at
+    // a time, so it follows whichever client the "Referencing progress
+    // for" picker above has selected (defaults to the only/first one).
+    const refClientId = builderRefClientIdFor(program);
     row.innerHTML = topHtml + `
       <div class="weekgrid">
         <div class="weekcol weekcol-label">
@@ -1491,7 +1587,7 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
             <input type="text" data-wf="reps" data-wi="${i}" value="${esc(wk.reps||"")}" placeholder="Reps">
             <input type="text" data-wf="load" data-wi="${i}" value="${esc(wk.load||"")}" placeholder="Load">
             <div class="rowdivider"></div>
-            <div class="actualsummary" title="Logged per set by the client -- open Preview Client View to see or edit the full breakdown">${esc(summarizeLoggedSets(wk) || "—")}</div>
+            <div class="actualsummary" title="Logged per set by the client -- open Preview Client View to see or edit the full breakdown">${esc(summarizeLoggedSetsFor(program, refClientId, ex, i) || "—")}</div>
           </div>
         `).join("")}
       </div>
@@ -1812,7 +1908,7 @@ INSTRUCTIONS
 
   const now = new Date().toISOString();
   const progName = (result && result.programName) || (clientName ? clientName + "'s Program" : "Auto-Built Program");
-  const data = {name: progName, days, weeks: weeksVal, goal: goals, clientId: linkedClient ? linkedClient.id : null, createdAt: now, updatedAt: now};
+  const data = {name: progName, days, weeks: weeksVal, goal: goals, coachNotes: notes, clientIds: linkedClient ? [linkedClient.id] : [], createdAt: now, updatedAt: now};
   showAutoBuildForm = false;
 
   if(!programsCol){
@@ -1898,6 +1994,12 @@ function scheduleClientSave(client){
       // Archived section -- coach-only bookkeeping, never read or shown on
       // the client's own side.
       messagesArchived: !!client.messagesArchived,
+      // A dated snapshot of "goals" is appended here every time it changes
+      // (see appendGoalsLogEntry) -- goals itself is already in this
+      // whitelist above, this just keeps a running history of it so both
+      // the client and the coach can see how the stated goal has evolved,
+      // not just what it currently says.
+      goalsLog: client.goalsLog || [],
       updatedAt: new Date().toISOString(),
     };
     try{
@@ -2014,6 +2116,112 @@ function buildClientPicker(selectedId, onSelect){
   }
 
   if(client) renderLinked(); else renderPicker();
+  return wrap;
+}
+
+/** Program Builder's client picker: unlike buildClientPicker above (one
+ *  client per rehab case / nutrition plan), a training program can be
+ *  assigned to several clients at once -- a group program. Everyone
+ *  assigned sees the exact same exercises/sets/reps prescription, but each
+ *  logs their own reps/weight and keeps their own PBs, kept apart by
+ *  program.actualsByClient (see getClientActuals et al.) so they never
+ *  overwrite each other. Shows a chip per assigned client (✕ to remove)
+ *  plus a search box to add another -- onChange(newClientIdsArray) fires on
+ *  every add/remove. */
+function buildProgramClientPicker(program, onChange){
+  const wrap = document.createElement("div");
+  wrap.className = "clientpicker multiclientpicker";
+
+  function currentClients(){
+    // Filter out any id that no longer resolves to a real client (e.g. the
+    // client was deleted) -- same graceful "just stops showing up" handling
+    // buildClientPicker's chip already gets for a single client.
+    return programClientIds(program).map(id => clientsCache.find(c => c.id === id)).filter(Boolean);
+  }
+
+  function render(){
+    wrap.innerHTML = "";
+    const chipRow = document.createElement("div");
+    chipRow.className = "clientchiprow";
+    const assigned = currentClients();
+    if(!assigned.length){
+      const hint = document.createElement("span");
+      hint.className = "clientpickerempty";
+      hint.textContent = "No clients assigned yet";
+      chipRow.appendChild(hint);
+    }
+    assigned.forEach(c => {
+      const chip = document.createElement("span");
+      chip.className = "clientchip";
+      chip.innerHTML = `👤 ${esc(c.name || "Unnamed client")} <button type="button" class="clientchipremove" title="Remove ${esc(c.name||"this client")}">✕</button>`;
+      chip.querySelector(".clientchipremove").addEventListener("click", () => {
+        onChange(programClientIds(program).filter(id => id !== c.id));
+        render();
+      });
+      chipRow.appendChild(chip);
+    });
+    wrap.appendChild(chipRow);
+
+    const searchWrap = document.createElement("div");
+    searchWrap.className = "clientpickersearch";
+    searchWrap.innerHTML = `<input type="text" class="clientsearch" placeholder="+ Add a client…" autocomplete="off">`;
+    const input = searchWrap.querySelector(".clientsearch");
+    let resultsEl = null;
+    const closeResults = () => { if(resultsEl){ resultsEl.remove(); resultsEl = null; } };
+    const addClientId = id => {
+      const ids = programClientIds(program);
+      if(!ids.includes(id)) onChange(ids.concat([id]));
+      input.value = "";
+      closeResults();
+      render();
+    };
+    input.addEventListener("input", () => {
+      const q = input.value.trim().toLowerCase();
+      closeResults();
+      if(!q) return;
+      const assignedIds = programClientIds(program);
+      const matches = clientsCache.filter(c => !assignedIds.includes(c.id) && (c.name||"").toLowerCase().includes(q)).slice(0, 6);
+      resultsEl = document.createElement("div");
+      resultsEl.className = "addex-results";
+      matches.forEach(m => {
+        const item = document.createElement("div");
+        item.className = "addex-item";
+        item.textContent = m.name;
+        item.addEventListener("mousedown", ev => { ev.preventDefault(); addClientId(m.id); });
+        resultsEl.appendChild(item);
+      });
+      const createItem = document.createElement("div");
+      createItem.className = "addex-item";
+      createItem.style.color = "var(--accent)";
+      createItem.textContent = `+ Create "${input.value.trim()}" as new client`;
+      createItem.addEventListener("mousedown", async ev => {
+        ev.preventDefault();
+        closeResults();
+        const now = new Date().toISOString();
+        const data = {name: input.value.trim(), goals: "", liftStats: [], weightUnit: "kg", notes: "", accessCode: genAccessCode(), tasks: [], createdAt: now, updatedAt: now};
+        if(clientsCol){
+          try{
+            const ref = await clientsCol.add(data);
+            addClientId(ref.id);
+          }catch(e){
+            const id = "local-" + rid();
+            clientsCache.unshift(Object.assign({id}, data));
+            addClientId(id);
+          }
+        } else {
+          const id = "local-" + rid();
+          clientsCache.unshift(Object.assign({id}, data));
+          addClientId(id);
+        }
+      });
+      resultsEl.appendChild(createItem);
+      searchWrap.appendChild(resultsEl);
+    });
+    input.addEventListener("blur", () => setTimeout(closeResults, 150));
+    wrap.appendChild(searchWrap);
+  }
+
+  render();
   return wrap;
 }
 
@@ -2276,27 +2484,49 @@ function renderEditor(){
   clientRow.className = "clientrow";
   const clientLabel = document.createElement("span");
   clientLabel.className = "clientrowlabel";
-  clientLabel.textContent = "Client";
+  clientLabel.textContent = "Client(s)";
   clientRow.appendChild(clientLabel);
-  clientRow.appendChild(buildClientPicker(p.clientId, client => {
-    currentProgram.clientId = client ? client.id : null;
+  clientRow.appendChild(buildProgramClientPicker(p, newIds => {
+    currentProgram.clientIds = newIds;
     renderEditor();
     scheduleSave();
   }));
   wrap.appendChild(clientRow);
 
-  const linkedClient = p.clientId ? clientsCache.find(c => c.id === p.clientId) : null;
+  const assignedIds = programClientIds(p);
+  const assignedClients = assignedIds.map(id => clientsCache.find(c => c.id === id)).filter(Boolean);
+  // Several people can share one program, but stats/progression math (Apply
+  // Progression's %1RM lookup, Update from Actuals, the read-only "Logged"
+  // column, Print) all need ONE specific person's numbers -- this picker
+  // only shows up once there's actually a choice to make.
+  const refClientId = builderRefClientIdFor(p);
+  const linkedClient = refClientId ? clientsCache.find(c => c.id === refClientId) : null;
+  if(assignedClients.length > 1){
+    const refRow = document.createElement("div");
+    refRow.className = "clientrow refclientrow";
+    refRow.innerHTML = `<span class="clientrowlabel">Referencing progress for</span>
+      <select id="refClientSelect">
+        ${assignedClients.map(c => `<option value="${esc(c.id)}" ${c.id === refClientId ? "selected" : ""}>${esc(c.name||"Unnamed client")}</option>`).join("")}
+      </select>`;
+    refRow.title = "This group program is shared by everyone above, but %1RM, Apply Progression, Update from Actuals and the Logged column below need one person's numbers to work from.";
+    wrap.appendChild(refRow);
+  }
 
   const metaRow = document.createElement("div");
   metaRow.className = "editor-meta-row";
   metaRow.innerHTML = `
     <div class="abform-field narrow"><label>Length (weeks)</label><input type="number" id="progWeeksInput" min="1" max="24" value="${weeksCountFor(p)}"></div>
-    <div class="abform-field"><label>Program goal</label><input type="text" id="progGoalInput" value="${esc(p.goal||"")}" placeholder="e.g. Build to a new back squat 1RM"></div>
+    <div class="abform-field"><label>Program goal <span class="privatetag">Private — only you see this</span></label><input type="text" id="progGoalInput" value="${esc(p.goal||"")}" placeholder="e.g. Build to a new back squat 1RM"></div>
     <button class="applyprogbtn" id="applyProgressionBtn" type="button">⟳ Apply Progression</button>
     ${weeksCountFor(p) > 1 ? '<button class="applyprogbtn actualsbtn" id="updateActualsBtn" type="button">📈 Update from Actuals</button>' : ""}
     <div class="progressionhint">Progression is generated from the goal and each exercise's movement pattern — set the weeks and goal, hit Apply, then adjust any week freely. Every 4th week eases off automatically (deload). Log what was actually done in the "Done / Wt used" rows below, then hit Update from Actuals to have the remaining weeks adjust to it.</div>
   `;
   wrap.appendChild(metaRow);
+
+  const notesRow = document.createElement("div");
+  notesRow.className = "abform-field coachnotesfield";
+  notesRow.innerHTML = `<label>Notes, needs &amp; restrictions <span class="privatetag">Private — only you see this</span></label><textarea id="coachNotesInput" placeholder="e.g. Recovering from a mild hamstring strain, dumbbell/bodyweight only, no Olympic lifts">${esc(p.coachNotes||"")}</textarea>`;
+  wrap.appendChild(notesRow);
 
   wrap.appendChild(buildStatsBox(p, linkedClient));
 
@@ -2341,10 +2571,20 @@ function renderEditor(){
     currentProgram.goal = e.target.value;
     scheduleSave();
   });
+  document.getElementById("coachNotesInput").addEventListener("input", e => {
+    currentProgram.coachNotes = e.target.value;
+    scheduleSave();
+  });
+  const refSelect = document.getElementById("refClientSelect");
+  if(refSelect) refSelect.addEventListener("change", e => {
+    builderRefClientId[currentProgram.id] = e.target.value;
+    renderEditor();
+  });
   wireApplyProgressionBtn(document.getElementById("applyProgressionBtn"), () => {
     const weeks = weeksCountFor(currentProgram);
     const goalProfile = detectGoalProfile(currentProgram.goal);
-    const statSource = (currentProgram.clientId && clientsCache.find(c => c.id === currentProgram.clientId)) || currentProgram;
+    const refId = builderRefClientIdFor(currentProgram);
+    const statSource = (refId && clientsCache.find(c => c.id === refId)) || currentProgram;
     const statsMap = liftStatsMap(statSource);
     (currentProgram.days||[]).forEach(day => (day.exercises||[]).forEach(ex => {
       ex.progression = generateProgressionForExercise(ex, weeks, goalProfile, statsMap);
@@ -2356,7 +2596,8 @@ function renderEditor(){
   const actualsBtn = document.getElementById("updateActualsBtn");
   if(actualsBtn) wireApplyProgressionBtn(actualsBtn, updateFromActuals);
   document.getElementById("printBtn").addEventListener("click", () => {
-    const client = currentProgram.clientId ? clientsCache.find(c => c.id === currentProgram.clientId) : null;
+    const refId = builderRefClientIdFor(currentProgram);
+    const client = refId ? clientsCache.find(c => c.id === refId) : null;
     document.getElementById("printArea").innerHTML = buildPrintHTML(currentProgram, client);
     window.print();
   });
@@ -3274,7 +3515,7 @@ function renderClientList(){
     return;
   }
   clientsCache.forEach(c => {
-    const progCount = programsCache.filter(p => p.clientId === c.id).length;
+    const progCount = programsCache.filter(p => programHasClient(p, c.id)).length;
     const caseCount = casesCache.filter(cc => cc.clientId === c.id).length;
     const nutCount = nutritionCache.filter(n => n.clientId === c.id).length;
     const div = document.createElement("div");
@@ -3337,7 +3578,7 @@ function wireClientDeleteBtn(btn){
     // cascading delete of the coach's actual programming. Their editors may
     // already be rendered with the old (now-stale) linked-client chip, so
     // refresh whichever of them was showing this client.
-    if(builderInited && currentProgram && currentProgram.clientId === idToDelete) renderEditor();
+    if(builderInited && currentProgram && programHasClient(currentProgram, idToDelete)) renderEditor();
     if(rehabInited && currentCase && currentCase.clientId === idToDelete) renderRehabEditor();
   });
 }
@@ -3431,12 +3672,21 @@ function scheduleClientProgramActualsSave(program){
   cmSetSaveStatus("Saving…");
   clearTimeout(clientProgActualsSaveTimer);
   clientProgActualsSaveTimer = setTimeout(async () => {
-    if(!program) return;
-    const payload = {days: program.days, updatedAt: new Date().toISOString()};
-    const isClientViewer = clientSession && clientSession.id === program.clientId;
+    if(!program || !clientSession) return;
+    // clientSession is whoever's client-mode view is on screen right now --
+    // a real client logged in on their own device, or the coach previewing
+    // one specific member of a group program -- either way, that's exactly
+    // whose slice of actualsByClient this save belongs to.
+    const actingClientId = clientSession.id;
+    const isClientViewer = programHasClient(program, actingClientId);
     if(programsCol && !String(program.id).startsWith("local-")){
       // The COACH's own browser, with real db access -- used both when she
-      // edits a program directly and when she's previewing a client.
+      // edits a program directly and when she's previewing a client. Her
+      // local copy of actualsByClient already holds every assigned
+      // client's own slice (nothing was redacted from her), so sending the
+      // whole map back is a safe, complete replacement of just that one
+      // top-level key -- it never touches the shared days/goal/etc.
+      const payload = {actualsByClient: program.actualsByClient || {}, updatedAt: new Date().toISOString()};
       try{
         await programsCol.doc(program.id).update(payload);
         cmSetSaveStatus("Saved");
@@ -3446,10 +3696,12 @@ function scheduleClientProgramActualsSave(program){
     } else if(isClientViewer && window.__clientPortal && clientSession.accessCode){
       // A logged-in CLIENT, logging their own sets. No Supabase session (see
       // tryClientLogin), so this goes through the access-code-checked RPC
-      // instead of the coach's db shim -- same pattern scheduleClientSave
-      // already uses for every other client-editable field.
+      // instead of the coach's db shim -- and only ever sends THIS client's
+      // own slice, so it can never overwrite the shared prescription or
+      // another member's log, even if several people share this program.
       try{
-        await window.__clientPortal.saveProgramActualsForCode(clientSession.accessCode, program.id, program.days);
+        const mySlice = (program.actualsByClient && program.actualsByClient[actingClientId]) || {};
+        await window.__clientPortal.saveProgramActualsForCode(clientSession.accessCode, program.id, mySlice);
         cmSetSaveStatus("Saved");
       }catch(e){
         console.error("[scheduleClientProgramActualsSave/client]", e);
@@ -3457,7 +3709,7 @@ function scheduleClientProgramActualsSave(program){
       }
     } else {
       const idx = programsCache.findIndex(p => p.id === program.id);
-      if(idx > -1) programsCache[idx] = Object.assign({}, programsCache[idx], payload);
+      if(idx > -1) programsCache[idx] = Object.assign({}, programsCache[idx], {actualsByClient: program.actualsByClient || {}});
       cmSetSaveStatus("Saved (this session only)");
     }
   }, 600);
@@ -4000,6 +4252,43 @@ function renderClientWeeklyGoals(client, myPrograms){
   return box;
 }
 
+// Appends a dated snapshot to client.goalsLog whenever their stated goal
+// actually changes -- skips a no-op save (same text, or newly blank) so the
+// log only grows on real changes, giving both the client and the coach a
+// running history of how the goal's been restated over time, not just
+// whatever it currently says.
+function appendGoalsLogEntry(client, newText){
+  const trimmed = (newText || "").trim();
+  const log = client.goalsLog || [];
+  const last = log[log.length - 1];
+  if(!trimmed || (last && last.text === trimmed)) return;
+  client.goalsLog = log.concat([{id: rid(), text: trimmed, at: new Date().toISOString()}]);
+}
+
+// The collapsible "Past goals" list under a goals box -- shared by the
+// client's own "Big Picture Goals" pill and the coach's Client Profile
+// page, so both sides see the exact same history the exact same way.
+function buildGoalsHistoryBox(client){
+  const log = (client.goalsLog || []).slice().reverse();
+  if(!log.length) return null;
+  const hist = document.createElement("details");
+  hist.className = "goalshistory";
+  hist.open = cmGoalsHistoryOpenIds.has(client.id);
+  hist.addEventListener("toggle", () => {
+    if(hist.open) cmGoalsHistoryOpenIds.add(client.id); else cmGoalsHistoryOpenIds.delete(client.id);
+  });
+  const summary = document.createElement("summary");
+  summary.textContent = `Past goals (${log.length})`;
+  hist.appendChild(summary);
+  log.forEach(entry => {
+    const row = document.createElement("div");
+    row.className = "goalshistoryrow";
+    row.innerHTML = `<span class="goalshistorydate">${esc(fmtShortDate(entry.at))}</span><span>${esc(entry.text)}</span>`;
+    hist.appendChild(row);
+  });
+  return hist;
+}
+
 function buildClientStatsView(client){
   // Reuses the exact same add/remove/unit-toggle stats box as the coach's
   // own client profile page -- the client can log a rep-max test they know
@@ -4137,7 +4426,7 @@ function buildClientNutritionPrefs(client){
 // on" by finding the last week that has ANY logged actual (reps or weight)
 // anywhere in the program, and defaulting to the week right after it. A
 // program nobody has logged anything for yet defaults to Week 1.
-function getSelectedWeekIndex(program){
+function getSelectedWeekIndex(program, clientId){
   const weeks = weeksCountFor(program);
   if(weeks <= 1) return 0;
   const saved = cmProgramWeekIndex[program.id];
@@ -4146,7 +4435,7 @@ function getSelectedWeekIndex(program){
   (program.days || []).forEach(day => (day.exercises || []).forEach(ex => {
     if(Array.isArray(ex.progression)){
       ex.progression.forEach((wk, i) => {
-        if(hasLoggedAnySet(wk) || (wk && (wk.actualReps || wk.actualWeight))) lastLogged = Math.max(lastLogged, i);
+        if(hasLoggedAnySetFor(program, clientId, ex, i)) lastLogged = Math.max(lastLogged, i);
       });
     }
   }));
@@ -4160,10 +4449,10 @@ function setSelectedWeekIndex(program, idx){
 // The "Viewing: Week N of M" dropdown -- one per program, lets the client
 // jump their whole program's view to a different week. Only shown for
 // multi-week programs; a single-week program has nothing to pick between.
-function buildWeekSelector(program){
+function buildWeekSelector(program, clientId){
   const weeks = weeksCountFor(program);
   if(weeks <= 1) return null;
-  const idx = getSelectedWeekIndex(program);
+  const idx = getSelectedWeekIndex(program, clientId);
   const wrap = document.createElement("label");
   wrap.className = "cmweekselect";
   wrap.innerHTML = `Viewing:
@@ -4180,10 +4469,15 @@ function buildWeekSelector(program){
 // The per-set entry rows for one exercise in one week -- one row per
 // prescribed set (e.g. "3x9" prescribes 3 rows), each with its own reps and
 // weight fields, plus a button to log a set beyond what was prescribed.
-function buildClientSetRows(wk, program){
+// Reads/writes through program.actualsByClient[clientId] (see
+// ensureClientActualSets et al.) rather than the wk object itself, so this
+// same shared prescription can be logged against independently by everyone
+// assigned to a group program.
+function buildClientSetRows(program, clientId, ex, weekIndex){
   const wrap = document.createElement("div");
   wrap.className = "cmsetrows";
-  const actualSets = ensureActualSets(wk);
+  const wk = ex.progression[weekIndex];
+  const actualSets = ensureClientActualSets(program, clientId, ex, weekIndex);
   actualSets.forEach((setEntry, si) => {
     const setRow = document.createElement("div");
     setRow.className = "cmsetrow";
@@ -4194,7 +4488,9 @@ function buildClientSetRows(wk, program){
     `;
     setRow.querySelectorAll("[data-sf]").forEach(inp => {
       inp.addEventListener("input", () => {
-        setEntry[inp.dataset.sf] = inp.value;
+        const fresh = getClientActuals(program, clientId, ex, weekIndex).slice();
+        fresh[si] = Object.assign({}, fresh[si], {[inp.dataset.sf]: inp.value});
+        setClientActuals(program, clientId, ex, weekIndex, fresh);
         scheduleClientProgramActualsSave(program);
       });
     });
@@ -4205,7 +4501,8 @@ function buildClientSetRows(wk, program){
   addBtn.className = "cmaddsetbtn";
   addBtn.textContent = "+ Add Set";
   addBtn.addEventListener("click", () => {
-    wk.actualSets = ensureActualSets(wk).concat([{reps: "", weight: ""}]);
+    const withExtra = ensureClientActualSets(program, clientId, ex, weekIndex).concat([{reps: "", weight: ""}]);
+    setClientActuals(program, clientId, ex, weekIndex, withExtra);
     scheduleClientProgramActualsSave(program);
     renderClientModeView();
   });
@@ -4230,9 +4527,10 @@ function appendWatchDemoLink(container, ex){
   container.appendChild(link);
 }
 
-function buildClientExRow(ex, program, weeks, weekIndex){
+function buildClientExRow(ex, program, weeks, weekIndex, clientId){
   const row = document.createElement("div");
   row.className = "cmexrow";
+  if(!ex.id) ex.id = rid(); // safety net for any older exercise saved before ids were added
 
   const head = document.createElement("div");
   head.className = "cmexhead";
@@ -4262,7 +4560,7 @@ function buildClientExRow(ex, program, weeks, weekIndex){
   rxLabel.className = "cmrx";
   rxLabel.textContent = `Target: ${wk.sets || "—"}×${wk.reps || "—"}${wk.load ? " @ " + wk.load : ""}`;
   nowBox.appendChild(rxLabel);
-  nowBox.appendChild(buildClientSetRows(wk, program));
+  nowBox.appendChild(buildClientSetRows(program, clientId, ex, i));
   row.appendChild(nowBox);
 
   if(ex.notes){
@@ -4277,11 +4575,10 @@ function buildClientExRow(ex, program, weeks, weekIndex){
   // actually an earlier week with something worth looking back at.
   if(weeks > 1){
     const earlierWeeks = prog
-      .map((w, idx2) => Object.assign({}, w, {weekNum: idx2 + 1}))
+      .map((w, idx2) => Object.assign({}, w, {weekNum: idx2 + 1, weekIdx: idx2}))
       .slice(0, i)
-      .filter(w => w.sets || w.reps || w.load || hasLoggedAnySet(w));
+      .filter(w => w.sets || w.reps || w.load || hasLoggedAnySetFor(program, clientId, ex, w.weekIdx));
     if(earlierWeeks.length){
-      if(!ex.id) ex.id = rid(); // safety net for any older exercise saved before ids were added
       const hist = document.createElement("details");
       hist.className = "cmweekhistory";
       hist.open = cmWeekHistoryOpenIds.has(ex.id);
@@ -4295,7 +4592,7 @@ function buildClientExRow(ex, program, weeks, weekIndex){
         const hr = document.createElement("div");
         hr.className = "cmweekhistoryrow";
         const rx = `${w.sets || "—"}×${w.reps || "—"}${w.load ? " @ " + w.load : ""}`;
-        const logged = summarizeLoggedSets(w);
+        const logged = summarizeLoggedSetsFor(program, clientId, ex, w.weekIdx);
         hr.textContent = `Wk ${w.weekNum}: ${rx}` + (logged ? ` — ${logged}` : " — not logged");
         hist.appendChild(hr);
       });
@@ -4348,8 +4645,8 @@ function buildClientDayPill(program, day, client, weeks){
   });
   body.appendChild(scheduleRow);
 
-  const weekIndex = getSelectedWeekIndex(program);
-  (day.exercises || []).forEach(ex => body.appendChild(buildClientExRow(ex, program, weeks, weekIndex)));
+  const weekIndex = getSelectedWeekIndex(program, client.id);
+  (day.exercises || []).forEach(ex => body.appendChild(buildClientExRow(ex, program, weeks, weekIndex, client.id)));
   wrapper.appendChild(body);
   return wrapper;
 }
@@ -4358,8 +4655,11 @@ function buildClientProgramCard(program, client){
   const card = document.createElement("div");
   card.className = "cmprogram";
   const weeks = weeksCountFor(program);
-  card.innerHTML = `<h4>${esc(program.name||"Program")}</h4>${program.goal ? `<div class="cmexnotes">${esc(program.goal)}</div>` : ""}`;
-  const weekSelector = buildWeekSelector(program);
+  // Program goal is coach-only now (see the editor's "Private" tag) -- it
+  // used to show here as a note, but a shared/group program especially
+  // shouldn't be handing every member the same private planning note.
+  card.innerHTML = `<h4>${esc(program.name||"Program")}</h4>`;
+  const weekSelector = buildWeekSelector(program, client.id);
   if(weekSelector) card.appendChild(weekSelector);
   (program.days || []).forEach(day => {
     card.appendChild(buildClientDayPill(program, day, client, weeks));
@@ -4462,7 +4762,7 @@ function renderClientModeView(){
   header.innerHTML = `<h2>Welcome, ${esc(client.name || "there")}</h2><span class="savebadge" id="cmSaveStatus"></span><button class="cmlogout" id="cmLogoutBtn" type="button">Log out</button>`;
   host.appendChild(header);
 
-  const myPrograms = programsCache.filter(p => p.clientId === client.id);
+  const myPrograms = programsCache.filter(p => programHasClient(p, client.id));
   const myCases = casesCache.filter(c => c.clientId === client.id);
   const myNutrition = nutritionCache.filter(n => n.clientId === client.id);
 
@@ -4486,7 +4786,16 @@ function renderClientModeView(){
     goalsBox.placeholder = "e.g. Build to a 140kg back squat by December; stay pain-free through preseason.";
     goalsBox.value = client.goals || "";
     goalsBox.addEventListener("input", e => { client.goals = e.target.value; scheduleClientSave(client); });
+    // A dated log entry on blur, not every keystroke -- captures "what did
+    // this goal say" each time it's actually changed and stepped away from,
+    // not a new entry per character typed.
+    goalsBox.addEventListener("blur", e => {
+      appendGoalsLogEntry(client, e.target.value);
+      scheduleClientSave(client);
+    });
     body.appendChild(goalsBox);
+    const hist = buildGoalsHistoryBox(client);
+    if(hist) body.appendChild(hist);
   }));
 
   // The Road Map -- everything day-to-day lives nested inside here:
@@ -4647,7 +4956,13 @@ function renderClientProfile(){
   goalsBox.placeholder = "e.g. Build to a 140kg back squat by December; stay pain-free through preseason.";
   goalsBox.value = client.goals || "";
   goalsBox.addEventListener("input", e => { client.goals = e.target.value; scheduleClientSave(client); });
+  goalsBox.addEventListener("blur", e => {
+    appendGoalsLogEntry(client, e.target.value);
+    scheduleClientSave(client);
+  });
   wrap.appendChild(goalsBox);
+  const goalsHist = buildGoalsHistoryBox(client);
+  if(goalsHist) wrap.appendChild(goalsHist);
 
   const notesLabel = document.createElement("div");
   notesLabel.className = "field-label";
@@ -5096,7 +5411,7 @@ function renderClientProfile(){
   }
   wrap.appendChild(wgList);
 
-  const linkedPrograms = programsCache.filter(p => p.clientId === client.id);
+  const linkedPrograms = programsCache.filter(p => programHasClient(p, client.id));
   const progLabel = document.createElement("div");
   progLabel.className = "field-label";
   progLabel.textContent = "Programs";
