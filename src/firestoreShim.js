@@ -43,6 +43,14 @@ const TABLE_CONFIG = {
     mirrors: [
       { appField: "name", column: "name" },
       { appField: "clientId", column: "client_id" },
+      // A program can now be assigned to several clients at once (a group
+      // program) -- clientIds is the array of everyone assigned, mirrored
+      // onto its own real column so a client with no Supabase session can
+      // find "their" programs (see get_programs_for_code) without
+      // unpacking jsonb. clientId above is kept only for any old program
+      // saved before this existed; the app itself now always writes
+      // clientIds.
+      { appField: "clientIds", column: "client_ids" },
     ],
   },
   rehabCases: {
