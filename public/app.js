@@ -75,6 +75,22 @@ let cmSessionLogHistoryOpenIds = new Set();
 // Personal Info pill (same shared widget either side opens/edits).
 let cmBodyMetricsPillOpenIds = new Set();
 
+// A client's running rest timers (see buildRestTimerControl), keyed by
+// exercise id + week + set index. This has to live outside any render
+// function: renderClientModeView() gets called every ~20s by the client's
+// own message-poll (see startClientMessagePolling) even while nothing they
+// did caused it, and that fully wipes and rebuilds the DOM each time --
+// same "must survive a background rebuild" problem cmTrainingDayPillOpenIds
+// etc. above already solve for open/closed state. restTimerState stores
+// only the absolute end time (not a countdown number) so a timer picks up
+// exactly where it left off after a rebuild, however long that took.
+// restTimerIntervals is the currently-running interval bound to whichever
+// actual DOM node is on screen right now for that key; it gets cleared and
+// replaced (never left running against a detached node) every time that
+// row's control is rebuilt.
+let restTimerState = {};
+let restTimerIntervals = {};
+
 // Task-adding is a two-step "pick, then Save" flow (see renderClientProfile):
 // nothing lands on the client's real task list until the coach hits the
 // Save button, which makes the moment something actually got added
@@ -2276,6 +2292,7 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
       <div class="exrow-fields">
         <div class="exfield narrow"><label>Sets</label><input type="text" data-f="sets" value="${esc(ex.sets||"")}" placeholder="4"></div>
         <div class="exfield narrow"><label>Reps</label><input type="text" data-f="reps" value="${esc(ex.reps||"")}" placeholder="8"></div>
+        <div class="exfield narrow"><label>Rest (sec)</label><input type="text" inputmode="numeric" data-f="restSeconds" value="${esc(ex.restSeconds||"")}" placeholder="90"></div>
         <div class="exfield narrow loadmodefield"><label>Prescribe by</label></div>
         ${fieldKey ? `<div class="exfield narrow"><label>${esc(LOAD_MODE_LABEL[mode])}</label><input type="text" data-f="${fieldKey}" value="${esc(ex[fieldKey]||"")}" placeholder="${esc(LOAD_MODE_PLACEHOLDER[mode])}"></div>` : `<div class="exfield narrow loadmodeblank"><label>&nbsp;</label><span class="loadmodeblanknote">No reference — client's own judgement</span></div>`}
         <div class="exfield notes"><label>Notes</label><input type="text" data-f="notes" value="${esc(ex.notes||"")}" placeholder="e.g. safety squat bar, tempo 3-1-1, cue: chest up"></div>
@@ -2295,7 +2312,10 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
     row.querySelectorAll("input[data-f]").forEach(inp => {
       inp.addEventListener("input", () => {
         ex[inp.dataset.f] = inp.value;
-        if(Array.isArray(ex.progression) && ex.progression[0] && inp.dataset.f !== "notes"){
+        // restSeconds (like notes) is a flat, single property of the
+        // exercise itself, not something that varies week to week -- so it
+        // never gets mirrored into the per-week progression array.
+        if(Array.isArray(ex.progression) && ex.progression[0] && inp.dataset.f !== "notes" && inp.dataset.f !== "restSeconds"){
           ex.progression[0][inp.dataset.f] = inp.value;
         }
         onChange();
@@ -2334,6 +2354,7 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
         `).join("")}
       </div>
       <div class="exrow-fields">
+        <div class="exfield narrow"><label>Rest (sec)</label><input type="text" inputmode="numeric" data-f="restSeconds" value="${esc(ex.restSeconds||"")}" placeholder="90"></div>
         <div class="exfield notes" style="flex:1 1 100%;"><label>Notes</label><input type="text" data-f="notes" value="${esc(ex.notes||"")}" placeholder="e.g. safety squat bar, tempo 3-1-1, cue: chest up"></div>
       </div>
     `;
@@ -2355,11 +2376,72 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
       });
     });
     row.querySelector('[data-f="notes"]').addEventListener("input", e => { ex.notes = e.target.value; onChange(); });
+    row.querySelector('[data-f="restSeconds"]').addEventListener("input", e => { ex.restSeconds = e.target.value; onChange(); });
   }
 
   row.querySelector(".exremove").addEventListener("click", onRemove);
   if(onSwap) wireSwapButton(row, row.querySelector(".exswap"), ex, onSwap);
   return row;
+}
+
+// ---------------------------------------------------------------------
+// Supersets/circuits -- a day's exercises are just a flat, ordered list
+// (day.exercises); grouping is layered on top of that instead of a
+// separate nested data structure, by chaining CONSECUTIVE exercises via
+// each one's own ex.linkedToNext flag. Both the coach's editor
+// (buildDayEl) and the client's own view (buildClientDayPill) share these
+// two helpers so "what counts as a group" can never drift between them.
+// ---------------------------------------------------------------------
+
+// Splits a day's exercises into groups of one-or-more consecutive
+// exercises, breaking the chain wherever linkedToNext is falsy (or at the
+// end of the list). A plain solo exercise is simply a group of length 1.
+function computeExerciseGroups(day){
+  const exs = day.exercises || [];
+  const groups = [];
+  let current = [];
+  exs.forEach((ex, idx) => {
+    current.push(ex);
+    if(!ex.linkedToNext || idx === exs.length - 1){
+      groups.push(current);
+      current = [];
+    }
+  });
+  return groups;
+}
+
+// "" for a solo exercise (no badge shown), "Superset" for a 2-exercise
+// group, "Circuit" for 3 or more -- matches how most coaches already talk
+// about these (a superset is specifically a pair; three or more back to
+// back is normally called a circuit).
+function groupKindOf(group){
+  if(group.length >= 3) return "Circuit";
+  if(group.length === 2) return "Superset";
+  return "";
+}
+
+// Builds the small connector control shown between two adjacent exercise
+// rows in the COACH's editor (never shown client-side -- clients just see
+// the resulting group, not the control that built it). Clicking it toggles
+// whether `ex` (the exercise just above this control) is chained to
+// whichever exercise comes right after it in the same day.
+function buildLinkToggle(ex){
+  const wrap = document.createElement("div");
+  wrap.className = "exlinktoggle";
+  const linked = !!ex.linkedToNext;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "exlinkbtn" + (linked ? " linked" : "");
+  btn.textContent = linked
+    ? "🔗 Linked as a superset/circuit with the exercise below — click to unlink"
+    : "⛓ Link with the exercise below (superset/circuit)";
+  btn.addEventListener("click", () => {
+    ex.linkedToNext = !ex.linkedToNext;
+    renderEditor();
+    scheduleSave();
+  });
+  wrap.appendChild(btn);
+  return wrap;
 }
 
 function buildDayEl(day){
@@ -2390,18 +2472,49 @@ function buildDayEl(day){
   });
   box.appendChild(head);
 
-  (day.exercises || []).forEach(ex => box.appendChild(buildProgExRow(
-    ex, currentProgram,
-    () => scheduleSave(),
-    () => { day.exercises = (day.exercises||[]).filter(e => e.id !== ex.id); renderEditor(); scheduleSave(); },
-    (rec) => {
-      ex.exercise = rec.exercise; ex.group = rec.group; ex.sub = rec.sub; ex.plane = rec.plane;
-      ex.pattern = rec.pattern; ex.joint = rec.joint; ex.primary = rec.primary; ex.secondary = rec.secondary;
-      ex.notes = "";
-      renderEditor();
-      scheduleSave();
+  // Work out which exercises fall into a superset/circuit together (see
+  // computeExerciseGroups above) so the first row of each group gets a
+  // "Superset A"/"Circuit A" label with an Ungroup button, and every
+  // exercise except the last in the day gets a link-toggle underneath it.
+  const exs = day.exercises || [];
+  const groups = computeExerciseGroups(day);
+  const groupInfoByExId = {};
+  let groupLetterCode = 65; // "A"
+  groups.forEach(group => {
+    const kind = groupKindOf(group);
+    const letter = kind ? String.fromCharCode(groupLetterCode++) : "";
+    group.forEach((ex, i) => { groupInfoByExId[ex.id] = {kind, letter, isFirst: i === 0, group}; });
+  });
+
+  exs.forEach((ex, idx) => {
+    const info = groupInfoByExId[ex.id];
+    if(info && info.kind && info.isFirst){
+      const label = document.createElement("div");
+      label.className = "exgrouplabel";
+      label.innerHTML = `<span>${esc(info.kind)} ${esc(info.letter)}</span> <button type="button" class="exgroup-ungroup">Ungroup</button>`;
+      label.querySelector(".exgroup-ungroup").addEventListener("click", () => {
+        info.group.forEach(member => { member.linkedToNext = false; });
+        renderEditor();
+        scheduleSave();
+      });
+      box.appendChild(label);
     }
-  )));
+    const row = buildProgExRow(
+      ex, currentProgram,
+      () => scheduleSave(),
+      () => { day.exercises = (day.exercises||[]).filter(e => e.id !== ex.id); renderEditor(); scheduleSave(); },
+      (rec) => {
+        ex.exercise = rec.exercise; ex.group = rec.group; ex.sub = rec.sub; ex.plane = rec.plane;
+        ex.pattern = rec.pattern; ex.joint = rec.joint; ex.primary = rec.primary; ex.secondary = rec.secondary;
+        ex.notes = "";
+        renderEditor();
+        scheduleSave();
+      }
+    );
+    if(info && info.kind) row.classList.add("exrow-grouped");
+    box.appendChild(row);
+    if(idx < exs.length - 1) box.appendChild(buildLinkToggle(ex));
+  });
 
   const addBox = document.createElement("div");
   addBox.className = "addex";
@@ -2432,6 +2545,13 @@ function buildDayEl(day){
             id: rid(), exercise: m.exercise, group: m.group, sub: m.sub, plane: m.plane,
             pattern: m.pattern, joint: m.joint, primary: m.primary, secondary: m.secondary,
             sets: "", reps: "", load: "", rpe: "", rir: "", loadMode: "", notes: "",
+            // restSeconds: shown to the client as a "Start Rest" timer next
+            // to each set once this is filled in (see buildRestTimerControl).
+            // linkedToNext: chains this exercise with whichever one comes
+            // right after it in this same day into a superset/circuit (see
+            // computeExerciseGroups) -- blank/false for an ordinary solo
+            // exercise, same as every program saved before this existed.
+            restSeconds: "", linkedToNext: false,
           }]);
           input.value = "";
           closeResults();
@@ -2469,9 +2589,20 @@ function buildPrintHTML(program, client){
     } else {
       h += "<th>Sets</th><th>Reps</th><th>Load</th>";
     }
-    h += "<th>Notes</th></tr></thead><tbody>";
+    h += "<th>Rest</th><th>Notes</th></tr></thead><tbody>";
+    // Groups get their exercise name prefixed with "Superset A:"/"Circuit
+    // A:" so a printed page still shows which exercises are meant to be
+    // done back-to-back, even without the editor's visual grouping.
+    const groupInfoByExId = {};
+    let letterCode = 65;
+    computeExerciseGroups(day).forEach(group => {
+      const kind = groupKindOf(group);
+      const letter = kind ? String.fromCharCode(letterCode++) : "";
+      group.forEach(ex => { groupInfoByExId[ex.id] = kind ? `${kind} ${letter}: ` : ""; });
+    });
     (day.exercises || []).forEach(ex => {
-      h += `<tr><td>${esc(ex.exercise)}</td><td>${esc(ex.group)} — ${esc(ex.sub)}</td>`;
+      const prefix = groupInfoByExId[ex.id] || "";
+      h += `<tr><td>${esc(prefix)}${esc(ex.exercise)}</td><td>${esc(ex.group)} — ${esc(ex.sub)}</td>`;
       if(weeks > 1){
         const prog = Array.isArray(ex.progression) && ex.progression.length === weeks ? ex.progression : progressionOf(ex, weeks);
         for(let i=0; i<weeks; i++){
@@ -2482,7 +2613,7 @@ function buildPrintHTML(program, client){
       } else {
         h += `<td>${esc(ex.sets||"")}</td><td>${esc(ex.reps||"")}</td><td>${esc(loadIntensityCell(ex, ex))}</td>`;
       }
-      h += `<td>${esc(ex.notes||"")}</td></tr>`;
+      h += `<td>${esc(ex.restSeconds ? ex.restSeconds + "s" : "")}</td><td>${esc(ex.notes||"")}</td></tr>`;
     });
     h += "</tbody></table>";
   });
@@ -2588,8 +2719,9 @@ INSTRUCTIONS
 - Copy each chosen exercise's "exercise" and "sub" fields EXACTLY as they appear in the library — do not invent, rename, translate, or reword them.
 - Suggest reasonable STARTING (week 1) sets and reps as short strings (e.g. "4" and "8", or "3" and "10-12") appropriate to the goal. Add a short note only when genuinely useful (e.g. a coaching cue or tempo). Leave load blank.
 - Vary the exercise selection across days rather than repeating the same ones every day, unless the goal specifically calls for repeated skill work.
+- Where it genuinely suits the goal (e.g. a classic agonist/antagonist pair, or a short metabolic-finisher circuit), you may pair or chain 2-3 consecutive exercises into a superset/circuit by setting "linked": true on every exercise in that chain EXCEPT the last one in the chain (the last one stays "linked": false, or omitted, to mark where the group ends). Leave "linked" false/omitted for an ordinary standalone exercise. Don't overuse this -- most days should still be mostly standalone exercises.
 - Respond with ONLY JSON, no commentary, matching exactly this shape:
-{"programName": string, "days": [{"label": string, "exercises": [{"exercise": string, "sub": string, "sets": string, "reps": string, "notes": string}]}]}`;
+{"programName": string, "days": [{"label": string, "exercises": [{"exercise": string, "sub": string, "sets": string, "reps": string, "notes": string, "linked": boolean}]}]}`;
 
   let result;
   try{
@@ -2613,6 +2745,12 @@ INSTRUCTIONS
         id: rid(), exercise: rec.exercise, group: rec.group, sub: rec.sub, plane: rec.plane,
         pattern: rec.pattern, joint: rec.joint, primary: rec.primary, secondary: rec.secondary,
         sets: String(sx.sets||""), reps: String(sx.reps||""), load: "", rpe: "", notes: String(sx.notes||""),
+        // restSeconds is always left for the coach to fill in by hand (see
+        // the Rest field in buildProgExRow) -- not something to guess at
+        // generating time. linkedToNext carries over Claude's optional
+        // superset/circuit pairing so it shows up already grouped in the
+        // editor below, exactly as if the coach had linked it herself.
+        restSeconds: "", linkedToNext: !!sx.linked,
       };
     }).filter(Boolean);
     return {id: rid(), label: (d.label || ("Day " + (i+1))), exercises};
@@ -5515,10 +5653,68 @@ function buildWeekSelector(program, clientId){
 // ensureClientActualSets et al.) rather than the wk object itself, so this
 // same shared prescription can be logged against independently by everyone
 // assigned to a group program.
+// mm:ss for a rest countdown -- 90 -> "1:30", 45 -> "0:45".
+function fmtRestClock(totalSeconds){
+  const s = Math.max(0, Math.round(totalSeconds));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m + ":" + String(r).padStart(2, "0");
+}
+
+// The "Start Rest" control shown next to one specific set, once the coach
+// has filled in a Rest (sec) value for this exercise (see the Rest field in
+// buildProgExRow). Tapping Start begins a countdown for that many seconds;
+// tapping Stop (or letting it reach 0) clears it. See the restTimerState
+// comment above for why this reads/writes that shared state instead of
+// just closing over a local variable -- a plain local timer would silently
+// reset every time the client's ~20s message poll rebuilds this row.
+function buildRestTimerControl(ex, weekIndex, setIndex){
+  const key = ex.id + "_w" + weekIndex + "_s" + setIndex;
+  const wrap = document.createElement("span");
+  wrap.className = "cmresttimer";
+
+  function paint(){
+    if(restTimerIntervals[key]){ clearInterval(restTimerIntervals[key]); delete restTimerIntervals[key]; }
+    const state = restTimerState[key];
+    const remaining = state ? Math.round((state.endsAt - Date.now()) / 1000) : 0;
+    if(state && remaining > 0){
+      wrap.innerHTML = `<span class="cmresttimeleft">${fmtRestClock(remaining)}</span> <button type="button" class="cmreststop">Stop</button>`;
+      wrap.querySelector(".cmreststop").addEventListener("click", () => {
+        delete restTimerState[key];
+        paint();
+      });
+      restTimerIntervals[key] = setInterval(() => {
+        const s = restTimerState[key];
+        if(!s){ paint(); return; }
+        const rem = Math.round((s.endsAt - Date.now()) / 1000);
+        if(rem <= 0){
+          delete restTimerState[key];
+          paint();
+          if(navigator.vibrate) navigator.vibrate([120, 60, 120]); // subtle "rest's up" nudge where supported
+        } else {
+          const timeEl = wrap.querySelector(".cmresttimeleft");
+          if(timeEl) timeEl.textContent = fmtRestClock(rem);
+        }
+      }, 250);
+    } else {
+      delete restTimerState[key]; // clean up an already-expired entry, if any
+      const secs = parseInt(ex.restSeconds, 10) || 0;
+      wrap.innerHTML = `<button type="button" class="cmreststart">▶ Start Rest (${fmtRestClock(secs)})</button>`;
+      wrap.querySelector(".cmreststart").addEventListener("click", () => {
+        restTimerState[key] = {endsAt: Date.now() + secs * 1000};
+        paint();
+      });
+    }
+  }
+  paint();
+  return wrap;
+}
+
 function buildClientSetRows(program, clientId, ex, weekIndex){
   const wrap = document.createElement("div");
   wrap.className = "cmsetrows";
   const wk = ex.progression[weekIndex];
+  const restSecs = parseInt(ex.restSeconds, 10) || 0;
   const actualSets = ensureClientActualSets(program, clientId, ex, weekIndex);
   actualSets.forEach((setEntry, si) => {
     const setRow = document.createElement("div");
@@ -5536,6 +5732,7 @@ function buildClientSetRows(program, clientId, ex, weekIndex){
         scheduleClientProgramActualsSave(program);
       });
     });
+    if(restSecs > 0) setRow.appendChild(buildRestTimerControl(ex, weekIndex, si));
     wrap.appendChild(setRow);
   });
   const addBtn = document.createElement("button");
@@ -5569,11 +5766,25 @@ function appendWatchDemoLink(container, ex){
   container.appendChild(link);
 }
 
-function buildClientExRow(ex, program, weeks, weekIndex, client){
+function buildClientExRow(ex, program, weeks, weekIndex, client, groupInfo){
   const clientId = client.id;
   const row = document.createElement("div");
   row.className = "cmexrow";
   if(!ex.id) ex.id = rid(); // safety net for any older exercise saved before ids were added
+
+  // Read-only version of the coach editor's group label (see
+  // computeExerciseGroups) -- shown once, above the first exercise in the
+  // group, so the client knows "these go back-to-back" without needing any
+  // of the editor's own link-toggle controls.
+  if(groupInfo && groupInfo.kind){
+    row.classList.add("cmexrow-grouped");
+    if(groupInfo.isFirst){
+      const groupLabel = document.createElement("div");
+      groupLabel.className = "cmexgrouplabel";
+      groupLabel.textContent = `${groupInfo.kind} ${groupInfo.letter}`;
+      row.appendChild(groupLabel);
+    }
+  }
 
   // Per-set logging works the same whether this program has one week or
   // many -- progressionOf(ex, 1) just treats a single-week program as a
@@ -5816,7 +6027,17 @@ function buildClientDayPill(program, day, client, weeks){
   body.appendChild(scheduleRow);
 
   const weekIndex = getSelectedWeekIndex(program, client.id);
-  (day.exercises || []).forEach(ex => body.appendChild(buildClientExRow(ex, program, weeks, weekIndex, client)));
+  // Same grouping the coach set up in the editor (see computeExerciseGroups),
+  // read-only here -- just enough info per exercise to show its "Superset
+  // A"/"Circuit A" label once, above the first exercise in that group.
+  const dayGroupInfoByExId = {};
+  let dayGroupLetterCode = 65;
+  computeExerciseGroups(day).forEach(group => {
+    const kind = groupKindOf(group);
+    const letter = kind ? String.fromCharCode(dayGroupLetterCode++) : "";
+    group.forEach((ex, i) => { dayGroupInfoByExId[ex.id] = {kind, letter, isFirst: i === 0}; });
+  });
+  (day.exercises || []).forEach(ex => body.appendChild(buildClientExRow(ex, program, weeks, weekIndex, client, dayGroupInfoByExId[ex.id])));
   if((day.exercises || []).length){
     body.appendChild(buildSessionSaveBox(program, day, client, weekIndex, weeks));
   }
