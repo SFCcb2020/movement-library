@@ -39,6 +39,14 @@ let cmWeeklyAgendaOpen = false; // the old full 7-day view, now tucked inside To
 // the same day shows up in the other (per the coach's request that these
 // stay visually linked).
 let cmTrainingDayPillOpenIds = new Set();
+// Which week of a program's progression the client is currently viewing --
+// keyed by program.id, 0-based. Not saved to the database (same in-memory,
+// resets-on-reload approach as the other view-state above); getSelectedWeekIndex
+// below computes a sensible starting point the first time a program is seen.
+let cmProgramWeekIndex = {};
+// Which exercises currently have their "earlier weeks" reference list
+// expanded, keyed by exercise id.
+let cmWeekHistoryOpenIds = new Set();
 
 // Task-adding is a two-step "pick, then Save" flow (see renderClientProfile):
 // nothing lands on the client's real task list until the coach hits the
@@ -3995,7 +4003,53 @@ function buildClientNutritionPrefs(client){
   return sec;
 }
 
-function buildClientExRow(ex, program, weeks){
+// Which week (0-based) of `program`'s progression the client sees by
+// default. Nothing is saved for this until they actually pick a week
+// (see setSelectedWeekIndex) -- until then, this guesses "the week they're
+// on" by finding the last week that has ANY logged actual (reps or weight)
+// anywhere in the program, and defaulting to the week right after it. A
+// program nobody has logged anything for yet defaults to Week 1.
+function getSelectedWeekIndex(program){
+  const weeks = weeksCountFor(program);
+  if(weeks <= 1) return 0;
+  const saved = cmProgramWeekIndex[program.id];
+  if(saved !== undefined) return Math.max(0, Math.min(weeks - 1, saved));
+  let lastLogged = -1;
+  (program.days || []).forEach(day => (day.exercises || []).forEach(ex => {
+    if(Array.isArray(ex.progression)){
+      ex.progression.forEach((wk, i) => {
+        if(wk && (wk.actualReps || wk.actualWeight)) lastLogged = Math.max(lastLogged, i);
+      });
+    }
+  }));
+  return Math.max(0, Math.min(weeks - 1, lastLogged + 1));
+}
+
+function setSelectedWeekIndex(program, idx){
+  cmProgramWeekIndex[program.id] = idx;
+}
+
+// The "Viewing: Week N of M" dropdown -- one per program, lets the client
+// jump their whole program's view to a different week. Only shown for
+// multi-week programs; a single-week program has nothing to pick between.
+function buildWeekSelector(program){
+  const weeks = weeksCountFor(program);
+  if(weeks <= 1) return null;
+  const idx = getSelectedWeekIndex(program);
+  const wrap = document.createElement("label");
+  wrap.className = "cmweekselect";
+  wrap.innerHTML = `Viewing:
+    <select>
+      ${Array.from({length: weeks}, (_, i) => `<option value="${i}" ${i === idx ? "selected" : ""}>Week ${i + 1} of ${weeks}</option>`).join("")}
+    </select>`;
+  wrap.querySelector("select").addEventListener("change", e => {
+    setSelectedWeekIndex(program, parseInt(e.target.value, 10));
+    renderClientModeView();
+  });
+  return wrap;
+}
+
+function buildClientExRow(ex, program, weeks, weekIndex){
   const row = document.createElement("div");
   row.className = "cmexrow";
   const nameHtml = `<div class="cmexname">${esc(ex.exercise)}</div>`;
@@ -4004,26 +4058,65 @@ function buildClientExRow(ex, program, weeks){
     return row;
   }
   const prog = progressionOf(ex, weeks);
-  row.innerHTML = nameHtml + `
-    <div class="cmweekgrid">
-      ${prog.map((wk, i) => `
-        <div class="cmweekcol">
-          <div class="cmwklabel">Wk ${i+1}</div>
-          <div class="cmrx">${esc(wk.sets||"—")}×${esc(wk.reps||"—")}${wk.load ? " @ "+esc(wk.load) : ""}</div>
-          <input type="text" data-wf="actualReps" data-wi="${i}" value="${esc(wk.actualReps||"")}" placeholder="Reps done">
-          <input type="text" data-wf="actualWeight" data-wi="${i}" value="${esc(wk.actualWeight||"")}" placeholder="Wt used">
-        </div>
-      `).join("")}
-    </div>
-    ${ex.notes ? `<div class="cmexnotes">${esc(ex.notes)}</div>` : ""}
+  const i = Math.max(0, Math.min(weeks - 1, weekIndex || 0));
+  const wk = prog[i] || {};
+
+  row.innerHTML = nameHtml;
+
+  const nowBox = document.createElement("div");
+  nowBox.className = "cmweeknow";
+  nowBox.innerHTML = `
+    <div class="cmwklabel">Week ${i + 1} of ${weeks}</div>
+    <div class="cmrx">${esc(wk.sets || "—")}×${esc(wk.reps || "—")}${wk.load ? " @ " + esc(wk.load) : ""}</div>
+    <input type="text" data-wf="actualReps" value="${esc(wk.actualReps || "")}" placeholder="Reps done">
+    <input type="text" data-wf="actualWeight" value="${esc(wk.actualWeight || "")}" placeholder="Wt used">
   `;
-  row.querySelectorAll("[data-wf]").forEach(inp => {
+  nowBox.querySelectorAll("[data-wf]").forEach(inp => {
     inp.addEventListener("input", () => {
-      const i = parseInt(inp.dataset.wi, 10);
       prog[i][inp.dataset.wf] = inp.value;
       scheduleClientProgramActualsSave(program);
     });
   });
+  row.appendChild(nowBox);
+
+  if(ex.notes){
+    const notesEl = document.createElement("div");
+    notesEl.className = "cmexnotes";
+    notesEl.textContent = ex.notes;
+    row.appendChild(notesEl);
+  }
+
+  // Reference to earlier weeks -- read-only (this is "what did I do
+  // before", not another place to edit it), and only shown when there's
+  // actually something worth looking back at.
+  const earlierWeeks = prog
+    .map((w, idx2) => Object.assign({}, w, {weekNum: idx2 + 1}))
+    .slice(0, i)
+    .filter(w => w.sets || w.reps || w.load || w.actualReps || w.actualWeight);
+  if(earlierWeeks.length){
+    if(!ex.id) ex.id = rid(); // safety net for any older exercise saved before ids were added
+    const hist = document.createElement("details");
+    hist.className = "cmweekhistory";
+    hist.open = cmWeekHistoryOpenIds.has(ex.id);
+    hist.addEventListener("toggle", () => {
+      if(hist.open) cmWeekHistoryOpenIds.add(ex.id); else cmWeekHistoryOpenIds.delete(ex.id);
+    });
+    const histSummary = document.createElement("summary");
+    histSummary.textContent = "Earlier weeks";
+    hist.appendChild(histSummary);
+    earlierWeeks.slice().reverse().forEach(w => {
+      const hr = document.createElement("div");
+      hr.className = "cmweekhistoryrow";
+      const rx = `${w.sets || "—"}×${w.reps || "—"}${w.load ? " @ " + w.load : ""}`;
+      const logged = (w.actualReps || w.actualWeight)
+        ? ` — logged ${w.actualReps || "—"} reps${w.actualWeight ? " @ " + w.actualWeight : ""}`
+        : " — not logged";
+      hr.textContent = `Wk ${w.weekNum}: ${rx}${logged}`;
+      hist.appendChild(hr);
+    });
+    row.appendChild(hist);
+  }
+
   return row;
 }
 
@@ -4069,7 +4162,8 @@ function buildClientDayPill(program, day, client, weeks){
   });
   body.appendChild(scheduleRow);
 
-  (day.exercises || []).forEach(ex => body.appendChild(buildClientExRow(ex, program, weeks)));
+  const weekIndex = getSelectedWeekIndex(program);
+  (day.exercises || []).forEach(ex => body.appendChild(buildClientExRow(ex, program, weeks, weekIndex)));
   wrapper.appendChild(body);
   return wrapper;
 }
@@ -4079,6 +4173,8 @@ function buildClientProgramCard(program, client){
   card.className = "cmprogram";
   const weeks = weeksCountFor(program);
   card.innerHTML = `<h4>${esc(program.name||"Program")}</h4>${program.goal ? `<div class="cmexnotes">${esc(program.goal)}</div>` : ""}`;
+  const weekSelector = buildWeekSelector(program);
+  if(weekSelector) card.appendChild(weekSelector);
   (program.days || []).forEach(day => {
     card.appendChild(buildClientDayPill(program, day, client, weeks));
   });
