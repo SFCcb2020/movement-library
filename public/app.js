@@ -2560,6 +2560,10 @@ function scheduleClientSave(client){
       // button on this profile knows where to send it; editable here too,
       // for a client you added by hand and want to be able to email later.
       email: client.email || "",
+      // Captured on the reorganized Client Profile's "Contact & Personal
+      // Info" pill -- not read anywhere yet (no automated birthday message
+      // exists), just stored so it's there once that gets built.
+      birthday: client.birthday || "",
       // The client's own opt-in toggle on their program view (see
       // buildClientProgramCard) -- purely a display preference, never
       // touches the coach's actual prescription.
@@ -5690,6 +5694,36 @@ function renderClientModeView(){
   }
 }
 
+// Coach-side collapsible pill for the Client Profile page (THE SQUAD tab) --
+// same visual language as buildCmPill (the client's own "Road Map" pills),
+// but keyed by client id + section rather than a single shared module-level
+// boolean. renderClientProfile() rebuilds its whole DOM on nearly every
+// edit (a select changing, a task being added), and this page shows one of
+// several different clients over the course of a session -- without a key
+// per client, opening "Access" for one client would leave it stuck open
+// (or shut) for every other client too, and without persisting the state
+// at all, that re-render would snap every open pill shut the moment she,
+// say, changed a nutrition goal dropdown.
+let clientProfilePillOpen = {}; // "<clientId>::<sectionKey>" -> true/false
+function buildClientProfilePill(client, key, title, defaultOpen, fill, extraClass){
+  const details = document.createElement("details");
+  details.className = "cmpill" + (extraClass ? " " + extraClass : "");
+  const stateKey = client.id + "::" + key;
+  const isOpen = Object.prototype.hasOwnProperty.call(clientProfilePillOpen, stateKey)
+    ? clientProfilePillOpen[stateKey]
+    : !!defaultOpen;
+  details.open = isOpen;
+  details.addEventListener("toggle", () => { clientProfilePillOpen[stateKey] = details.open; });
+  const summary = document.createElement("summary");
+  summary.textContent = title;
+  details.appendChild(summary);
+  const body = document.createElement("div");
+  body.className = "cmpillbody";
+  fill(body);
+  details.appendChild(body);
+  return details;
+}
+
 function renderClientProfile(){
   const host = document.getElementById("clientHost");
   host.innerHTML = "";
@@ -5747,638 +5781,696 @@ function renderClientProfile(){
   clientMeta.innerHTML = `<span class="savebadge" id="clientSaveStatus"></span>`;
   wrap.appendChild(clientMeta);
 
-  const accessLabel = document.createElement("div");
-  accessLabel.className = "field-label";
-  accessLabel.textContent = "Client Access";
-  wrap.appendChild(accessLabel);
-  const accessBox = document.createElement("div");
-  accessBox.className = "accesscodebox";
-  accessBox.innerHTML = `
-    <span>Access code:</span>
-    <span class="accesscodeval" id="accessCodeVal">${esc(client.accessCode)}</span>
-    <button class="accesscopybtn" id="copyAccessBtn" type="button">Copy</button>
-    <button class="accessregenbtn" id="regenAccessBtn" type="button">Regenerate</button>
-  `;
-  wrap.appendChild(accessBox);
-  const accessHint = document.createElement("div");
-  accessHint.className = "statshint";
-  accessHint.textContent = "Share this code with " + (client.name || "this client") + " along with the link to this page — they'll use it to log in to their own view of just their program, rehab plan, goals and tasks, without seeing anyone else's.";
-  wrap.appendChild(accessHint);
+  const contactPill = buildClientProfilePill(client, "contact", "Contact & Personal Info", true, body => {
+  const contactBox = document.createElement("div");
+    contactBox.className = "accesscodebox";
+    contactBox.innerHTML = `
+      <span>Email:</span>
+      <input type="email" class="proginput" id="clientEmailInput" placeholder="client@example.com" value="${esc(client.email || "")}" style="max-width:220px;">
+    `;
+    body.appendChild(contactBox);
 
-  // Set automatically for anyone who joined via the Stripe payment link
-  // (see api/stripe-webhook.js); editable here too, so a client added by
-  // hand can also get their code emailed. The Resend button is the manual
-  // safety net for whenever the automatic email doesn't land -- Resend
-  // (or any email service) occasionally has a hiccup or a message gets
-  // stuck in spam.
-  const emailBox = document.createElement("div");
-  emailBox.className = "accesscodebox";
-  emailBox.innerHTML = `
-    <span>Email:</span>
-    <input type="email" class="proginput" id="clientEmailInput" placeholder="client@example.com" value="${esc(client.email || "")}" style="max-width:220px;">
-    <button class="accesscopybtn" id="resendAccessEmailBtn" type="button">Resend access code by email</button>
-  `;
-  wrap.appendChild(emailBox);
-  const resendStatus = document.createElement("div");
-  resendStatus.className = "statshint";
-  resendStatus.id = "resendAccessEmailStatus";
-  wrap.appendChild(resendStatus);
-  if(client.accessCodeEmailSent === false){
-    const warn = document.createElement("div");
-    warn.className = "gateerror";
-    warn.style.marginTop = "0";
-    warn.textContent = "⚠ The automatic welcome email didn't go out when they joined — use \"Resend access code by email\" above once you've checked their email address.";
-    wrap.appendChild(warn);
-  }
+    const birthdayLabel = document.createElement("div");
+    birthdayLabel.className = "field-label";
+    birthdayLabel.textContent = "Birthday";
+    body.appendChild(birthdayLabel);
+    const birthdayHint = document.createElement("div");
+    birthdayHint.className = "statshint";
+    birthdayHint.textContent = "So it's on file for whenever you're sending birthday messages.";
+    body.appendChild(birthdayHint);
+    const birthdayBox = document.createElement("div");
+    birthdayBox.className = "accesscodebox";
+    birthdayBox.innerHTML = `<input type="date" class="proginput" id="clientBirthdayInput" value="${esc(client.birthday || "")}" style="max-width:180px;">`;
+    body.appendChild(birthdayBox);
 
-  const visLabel = document.createElement("div");
-  visLabel.className = "field-label";
-  visLabel.textContent = "Client View Access";
-  wrap.appendChild(visLabel);
-  const visHint = document.createElement("div");
-  visHint.className = "statshint";
-  visHint.textContent = "Choose what " + (client.name || "this client") + " can see under The Road Map in their own view. Turning something off hides it everywhere for them, including anything already scheduled into their agenda.";
-  wrap.appendChild(visHint);
-  const visBox = document.createElement("div");
-  visBox.className = "visibilitytoggles";
-  [
-    {key: "training", label: "Training Program"},
-    {key: "rehab", label: "Rehab"},
-    {key: "nutrition", label: "Nutrition"},
-  ].forEach(({key, label}) => {
-    const row = document.createElement("label");
-    row.className = "cmsuggesttogglelabel";
-    row.innerHTML = `<input type="checkbox" ${client.visibility[key] !== false ? "checked" : ""}> ${esc(label)}`;
-    row.querySelector("input").addEventListener("change", e => {
-      // Cloned rather than mutated in place -- same reasoning as the
-      // agendaNotes edits just below: keeps this a single, whole-object
-      // reassignment so there's no ambiguity about what scheduleClientSave
-      // is about to persist.
-      client.visibility = Object.assign({}, client.visibility, {[key]: e.target.checked});
-      scheduleClientSave(client);
-    });
-    visBox.appendChild(row);
-  });
-  wrap.appendChild(visBox);
-
-  const goalsLabel = document.createElement("div");
-  goalsLabel.className = "field-label";
-  goalsLabel.textContent = "Goals";
-  wrap.appendChild(goalsLabel);
-  const goalsHint = document.createElement("div");
-  goalsHint.className = "statshint";
-  goalsHint.textContent = "Visible to " + (client.name || "this client") + " — they can also fill this in themselves from their own view.";
-  wrap.appendChild(goalsHint);
-  const goalsBox = document.createElement("textarea");
-  goalsBox.className = "diagnosisbox";
-  goalsBox.rows = 2;
-  goalsBox.placeholder = "e.g. Build to a 140kg back squat by December; stay pain-free through preseason.";
-  goalsBox.value = client.goals || "";
-  goalsBox.addEventListener("input", e => { client.goals = e.target.value; scheduleClientSave(client); });
-  goalsBox.addEventListener("blur", e => {
-    appendGoalsLogEntry(client, e.target.value);
-    scheduleClientSave(client);
-  });
-  wrap.appendChild(goalsBox);
-  const goalsHist = buildGoalsHistoryBox(client);
-  if(goalsHist) wrap.appendChild(goalsHist);
-
-  const notesLabel = document.createElement("div");
-  notesLabel.className = "field-label";
-  notesLabel.textContent = "Coach Notes (private)";
-  wrap.appendChild(notesLabel);
-  const notesHint = document.createElement("div");
-  notesHint.className = "statshint";
-  notesHint.textContent = "Only you can see this — it's never shown in " + (client.name || "this client") + "'s own view.";
-  wrap.appendChild(notesHint);
-  const notesBox = document.createElement("textarea");
-  notesBox.className = "diagnosisbox";
-  notesBox.rows = 2;
-  notesBox.placeholder = "Anything worth remembering about this client — availability, equipment, preferences…";
-  notesBox.value = client.notes || "";
-  notesBox.addEventListener("input", e => { client.notes = e.target.value; scheduleClientSave(client); });
-  wrap.appendChild(notesBox);
-
-  const sessionLogLabel = document.createElement("div");
-  sessionLogLabel.className = "field-label";
-  sessionLogLabel.textContent = "Session Notes (from Client)";
-  wrap.appendChild(sessionLogLabel);
-  const sessionLogHint = document.createElement("div");
-  sessionLogHint.className = "statshint";
-  sessionLogHint.textContent = "What " + (client.name || "this client") + " logged when they saved a finished training session — RPE and any notes they added. Visible only to you.";
-  wrap.appendChild(sessionLogHint);
-  const sessionLogHist = buildSessionLogHistoryBox(client);
-  if(sessionLogHist){
-    wrap.appendChild(sessionLogHist);
-  } else {
-    const emptyEl = document.createElement("div");
-    emptyEl.className = "cmempty";
-    emptyEl.textContent = "No sessions logged yet.";
-    wrap.appendChild(emptyEl);
-  }
-
-  client.agendaNotes = client.agendaNotes || {};
-  const agendaNotesLabel = document.createElement("div");
-  agendaNotesLabel.className = "field-label";
-  agendaNotesLabel.textContent = "Daily Agenda Notes";
-  wrap.appendChild(agendaNotesLabel);
-  const agendaNotesHint = document.createElement("div");
-  agendaNotesHint.className = "statshint";
-  agendaNotesHint.textContent = "Shown to " + (client.name || "this client") + " on that day in their Daily Agenda — e.g. a reminder for a specific day, unlike the private notes above.";
-  wrap.appendChild(agendaNotesHint);
-  const agendaNotesBox = document.createElement("div");
-  agendaNotesBox.className = "agendanoteseditor";
-  WEEKDAYS.forEach(wd => {
-    const row = document.createElement("div");
-    row.className = "agendanoterow";
-    row.innerHTML = `<span class="agendanotedaylabel">${wd.short}</span><input type="text" maxlength="200" value="${esc(client.agendaNotes[wd.key]||"")}" placeholder="e.g. Meal prep today">`;
-    row.querySelector("input").addEventListener("input", e => {
-      client.agendaNotes = Object.assign({}, client.agendaNotes || {});
-      client.agendaNotes[wd.key] = e.target.value;
-      scheduleClientSave(client);
-    });
-    agendaNotesBox.appendChild(row);
-  });
-  wrap.appendChild(agendaNotesBox);
-
-  const bmLabel = document.createElement("div");
-  bmLabel.className = "field-label";
-  bmLabel.textContent = "Body Metrics";
-  wrap.appendChild(bmLabel);
-  const bmHint = document.createElement("div");
-  bmHint.className = "statshint";
-  bmHint.textContent = client.name ? client.name + " can also fill this in themselves from their own view." : "The client can also fill this in themselves from their own view.";
-  wrap.appendChild(bmHint);
-  const bmBox = document.createElement("div");
-  bmBox.className = "bodymetricsbox";
-  const wUnit = client.weightUnit || "kg";
-  bmBox.innerHTML = `
-    <div class="exfield narrow"><label>Age</label><input type="number" id="bmAge" min="1" max="120" value="${esc(client.age||"")}" placeholder="28"></div>
-    <div class="exfield narrow"><label>Sex</label>
-      <select id="bmSex">
-        <option value="" ${!client.sex ? "selected" : ""}>—</option>
-        <option value="female" ${client.sex === "female" ? "selected" : ""}>Female</option>
-        <option value="male" ${client.sex === "male" ? "selected" : ""}>Male</option>
-      </select>
-    </div>
-    <div class="exfield narrow"><label>Height</label><input type="number" id="bmHeight" min="0" value="${esc(client.heightValue||"")}" placeholder="${client.heightUnit === "in" ? "68" : "173"}"></div>
-    <div class="exfield narrow"><label>Unit</label>
-      <select id="bmHeightUnit">
-        <option value="cm" ${client.heightUnit !== "in" ? "selected" : ""}>cm</option>
-        <option value="in" ${client.heightUnit === "in" ? "selected" : ""}>in</option>
-      </select>
-    </div>
-    <div class="exfield narrow"><label>Body Weight (${esc(wUnit)})</label><input type="number" id="bmWeight" min="0" step="0.1" value="${esc(client.bodyWeight||"")}" placeholder="70"></div>
-    <div class="exfield"><label>Activity Level</label>
-      <select id="bmActivity">
-        ${Object.keys(ACTIVITY_LEVELS).map(k => `<option value="${k}" ${client.activityLevel === k ? "selected" : ""}>${esc(ACTIVITY_LEVELS[k].label)}</option>`).join("")}
-      </select>
-    </div>
-    <div class="exfield"><label>Nutrition Goal</label>
-      <select id="bmGoal">
-        ${Object.keys(NUTRITION_GOALS).map(k => `<option value="${k}" ${client.nutritionGoal === k ? "selected" : ""}>${esc(NUTRITION_GOALS[k].label)}</option>`).join("")}
-      </select>
-    </div>
-  `;
-  wrap.appendChild(bmBox);
-
-  wrap.appendChild(buildWeightTrackerBox(client, renderClientProfile));
-
-  const prefsLabel = document.createElement("div");
-  prefsLabel.className = "field-label";
-  prefsLabel.textContent = "Nutrition Preferences";
-  wrap.appendChild(prefsLabel);
-  const prefsBox = document.createElement("textarea");
-  prefsBox.className = "diagnosisbox";
-  prefsBox.rows = 2;
-  prefsBox.placeholder = "e.g. Vegetarian, dairy-free, dislikes mushrooms, prefers 4 meals a day.";
-  prefsBox.value = client.dietPrefs || "";
-  prefsBox.addEventListener("input", e => { client.dietPrefs = e.target.value; scheduleClientSave(client); });
-  wrap.appendChild(prefsBox);
-
-  const targetsLabel = document.createElement("div");
-  targetsLabel.className = "field-label";
-  targetsLabel.textContent = "Nutrition Targets";
-  wrap.appendChild(targetsLabel);
-  const calc = calcNutritionTargets(client);
-  const targetsBox = document.createElement("div");
-  targetsBox.className = "nutritiontargetsbox";
-  if(!calc){
-    targetsBox.innerHTML = '<div class="emptyprogs">Add age, sex, height and body weight above to calculate calorie and macro targets.</div>';
-  } else {
-    targetsBox.innerHTML = `<div class="targetrow">
-      <div class="targetstat"><b>${calc.bmr}</b><span>BMR</span></div>
-      <div class="targetstat"><b>${calc.tdee}</b><span>TDEE</span></div>
-      <div class="targetstat"><b>${calc.calories}</b><span>Calories</span></div>
-      <div class="targetstat"><b>${calc.proteinG}g</b><span>Protein</span></div>
-      <div class="targetstat"><b>${calc.carbG}g</b><span>Carbs</span></div>
-      <div class="targetstat"><b>${calc.fatG}g</b><span>Fat</span></div>
-    </div>`;
-  }
-  wrap.appendChild(targetsBox);
-  const targetsScopeNote = document.createElement("div");
-  targetsScopeNote.className = "scopenote";
-  targetsScopeNote.textContent = "Estimated from standard formulas (Mifflin-St Jeor + activity level), not medical or dietetic advice — a starting point for the Nutrition tab, to adjust from how the client actually responds.";
-  wrap.appendChild(targetsScopeNote);
-
-  wrap.appendChild(buildStatsBox(null, client));
-
-  const taskLabel = document.createElement("div");
-  taskLabel.className = "field-label";
-  taskLabel.textContent = "Daily & Weekly Tasks";
-  wrap.appendChild(taskLabel);
-  const taskHint = document.createElement("div");
-  taskHint.className = "statshint";
-  taskHint.innerHTML = "Tasks assigned so far — each becomes a real tick-box in <b>" + esc(client.name || "the client") + "'s own view</b> (open &#34;👁 Preview Client View&#34; above to see it). Use the panel below to add more.";
-  wrap.appendChild(taskHint);
-  const taskList = document.createElement("div");
-  taskList.className = "tasklist";
-  if(!client.tasks.length){
-    taskList.innerHTML = '<div class="emptyprogs">No tasks assigned yet — add some below.</div>';
-  } else {
-    client.tasks.forEach(t => {
-      const row = document.createElement("div");
-      row.className = "taskrow";
-      const freqIcon = t.freq === "weekly" ? "🔁" : (t.freq === "days" ? "📅" : "☐");
-      row.innerHTML = `
-        <span class="taskrowicon" title="Shows as a checkbox in the client's view">${freqIcon}</span>
-        <input type="text" value="${esc(t.title||"")}" placeholder="e.g. Foam roll 10 min">
-        <select>
-          <option value="daily" ${(!t.freq || t.freq === "daily") ? "selected" : ""}>Daily</option>
-          <option value="weekly" ${t.freq === "weekly" ? "selected" : ""}>Weekly</option>
-          <option value="days" ${t.freq === "days" ? "selected" : ""}>Specific days</option>
-        </select>
-        ${t.freq === "weekly" ? `<span style="font-size:12px;color:var(--ink-dim);">×</span><input type="number" min="1" max="14" value="${t.target||3}"><span style="font-size:12px;color:var(--ink-dim);">/week</span>` : ""}
-        <button class="taskrmbtn" type="button" title="Remove task">✕</button>
-        ${t.freq === "days" ? '<div class="daychips" data-role="daychips"></div>' : ""}
+      const bmLabel = document.createElement("div");
+      bmLabel.className = "field-label";
+      bmLabel.textContent = "Body Metrics";
+      body.appendChild(bmLabel);
+      const bmHint = document.createElement("div");
+      bmHint.className = "statshint";
+      bmHint.textContent = client.name ? client.name + " can also fill this in themselves from their own view." : "The client can also fill this in themselves from their own view.";
+      body.appendChild(bmHint);
+      const bmBox = document.createElement("div");
+      bmBox.className = "bodymetricsbox";
+      const wUnit = client.weightUnit || "kg";
+      bmBox.innerHTML = `
+        <div class="exfield narrow"><label>Age</label><input type="number" id="bmAge" min="1" max="120" value="${esc(client.age||"")}" placeholder="28"></div>
+        <div class="exfield narrow"><label>Sex</label>
+          <select id="bmSex">
+            <option value="" ${!client.sex ? "selected" : ""}>—</option>
+            <option value="female" ${client.sex === "female" ? "selected" : ""}>Female</option>
+            <option value="male" ${client.sex === "male" ? "selected" : ""}>Male</option>
+          </select>
+        </div>
+        <div class="exfield narrow"><label>Height</label><input type="number" id="bmHeight" min="0" value="${esc(client.heightValue||"")}" placeholder="${client.heightUnit === "in" ? "68" : "173"}"></div>
+        <div class="exfield narrow"><label>Unit</label>
+          <select id="bmHeightUnit">
+            <option value="cm" ${client.heightUnit !== "in" ? "selected" : ""}>cm</option>
+            <option value="in" ${client.heightUnit === "in" ? "selected" : ""}>in</option>
+          </select>
+        </div>
+        <div class="exfield narrow"><label>Body Weight (${esc(wUnit)})</label><input type="number" id="bmWeight" min="0" step="0.1" value="${esc(client.bodyWeight||"")}" placeholder="70"></div>
+        <div class="exfield"><label>Activity Level</label>
+          <select id="bmActivity">
+            ${Object.keys(ACTIVITY_LEVELS).map(k => `<option value="${k}" ${client.activityLevel === k ? "selected" : ""}>${esc(ACTIVITY_LEVELS[k].label)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="exfield"><label>Nutrition Goal</label>
+          <select id="bmGoal">
+            ${Object.keys(NUTRITION_GOALS).map(k => `<option value="${k}" ${client.nutritionGoal === k ? "selected" : ""}>${esc(NUTRITION_GOALS[k].label)}</option>`).join("")}
+          </select>
+        </div>
       `;
-      row.querySelector('input[type="text"]').addEventListener("input", e => { t.title = e.target.value; scheduleClientSave(client); });
-      row.querySelector("select").addEventListener("change", e => {
-        t.freq = e.target.value;
-        if(t.freq === "weekly" && !t.target) t.target = 3;
-        if(t.freq === "days" && !t.days) t.days = [];
-        renderClientProfile();
-        scheduleClientSave(client);
-      });
-      const targetInp = row.querySelector('input[type="number"]');
-      if(targetInp){
-        targetInp.addEventListener("input", e => { t.target = Math.max(1, parseInt(e.target.value, 10) || 1); scheduleClientSave(client); });
-      }
-      const dayChipsEl = row.querySelector('[data-role="daychips"]');
-      if(dayChipsEl){
-        buildDayChips(dayChipsEl, t.days, v => {
-          const i = (t.days || []).indexOf(v);
-          t.days = i > -1 ? t.days.filter(x => x !== v) : (t.days || []).concat([v]);
-          scheduleClientSave(client);
-          renderClientProfile();
-        });
-      }
-      row.querySelector(".taskrmbtn").addEventListener("click", () => {
-        client.tasks = client.tasks.filter(x => x.id !== t.id);
-        renderClientProfile();
-        scheduleClientSave(client);
-      });
-      taskList.appendChild(row);
-    });
-  }
-  wrap.appendChild(taskList);
+      body.appendChild(bmBox);
 
-  // Adding tasks is a deliberate two-step "pick, then Save" flow: ticking a
-  // suggestion or typing a custom task only queues it here -- nothing lands
-  // on the client's real list, and nothing is saved, until Save is pressed.
-  // That single, explicit confirmation moment (with a visible "Saved N
-  // tasks" message right after) removes any doubt about whether an action
-  // "took", multi-select falls out for free, and it matches how a lot of
-  // people expect a "choose some things, then confirm" panel to work.
-  if(pendingTasksClientId !== client.id){
-    pendingTasksClientId = client.id;
-    pendingPresetTitles = new Set();
-    pendingCustomDrafts = [];
-  }
+      body.appendChild(buildWeightTrackerBox(client, renderClientProfile));
 
-  const addPanel = document.createElement("div");
-  addPanel.className = "addtaskspanel";
-  const addPanelLabel = document.createElement("div");
-  addPanelLabel.className = "field-label";
-  addPanelLabel.style.marginTop = "0";
-  addPanelLabel.textContent = "Add Tasks";
-  addPanel.appendChild(addPanelLabel);
-  const addPanelHint = document.createElement("div");
-  addPanelHint.className = "statshint";
-  addPanelHint.textContent = "Tick any suggestions below and/or type your own — pick as many as you like, then hit Save to add them all to " + (client.name || "this client") + "'s list at once.";
-  addPanel.appendChild(addPanelHint);
+      const prefsLabel = document.createElement("div");
+      prefsLabel.className = "field-label";
+      prefsLabel.textContent = "Nutrition Preferences";
+      body.appendChild(prefsLabel);
+      const prefsBox = document.createElement("textarea");
+      prefsBox.className = "diagnosisbox";
+      prefsBox.rows = 2;
+      prefsBox.placeholder = "e.g. Vegetarian, dairy-free, dislikes mushrooms, prefers 4 meals a day.";
+      prefsBox.value = client.dietPrefs || "";
+      prefsBox.addEventListener("input", e => { client.dietPrefs = e.target.value; scheduleClientSave(client); });
+      body.appendChild(prefsBox);
 
-  const presetsDetails = document.createElement("details");
-  presetsDetails.className = "taskpresets";
-  presetsDetails.open = taskPresetsOpen;
-  presetsDetails.addEventListener("toggle", () => { taskPresetsOpen = presetsDetails.open; });
-  const presetsSummary = document.createElement("summary");
-  presetsSummary.textContent = "Suggested tasks & habit builders";
-  presetsDetails.appendChild(presetsSummary);
-  Object.keys(TASK_PRESETS).forEach(category => {
-    const catLabel = document.createElement("div");
-    catLabel.className = "taskpresetcat";
-    catLabel.textContent = category;
-    presetsDetails.appendChild(catLabel);
-    const pillRow = document.createElement("div");
-    pillRow.className = "pills";
-    TASK_PRESETS[category].forEach(preset => {
-      const alreadyAdded = client.tasks.some(t => t.title === preset.title);
-      const picked = pendingPresetTitles.has(preset.title);
-      const pill = document.createElement("button");
-      pill.type = "button";
-      pill.className = "pill taskpresetpill" + (alreadyAdded ? " zero" : (picked ? " picked" : ""));
-      pill.textContent = (alreadyAdded ? "✓ " : (picked ? "☑ " : "☐ ")) + preset.title + (preset.freq === "weekly" ? ` · ${preset.target}x/wk` : "");
-      if(!alreadyAdded){
-        pill.title = picked ? "Selected -- click to remove from this batch" : "Click to select, then hit Save below";
-        pill.addEventListener("click", () => {
-          if(pendingPresetTitles.has(preset.title)) pendingPresetTitles.delete(preset.title);
-          else pendingPresetTitles.add(preset.title);
-          renderClientProfile();
-        });
+      const targetsLabel = document.createElement("div");
+      targetsLabel.className = "field-label";
+      targetsLabel.textContent = "Nutrition Targets";
+      body.appendChild(targetsLabel);
+      const calc = calcNutritionTargets(client);
+      const targetsBox = document.createElement("div");
+      targetsBox.className = "nutritiontargetsbox";
+      if(!calc){
+        targetsBox.innerHTML = '<div class="emptyprogs">Add age, sex, height and body weight above to calculate calorie and macro targets.</div>';
       } else {
-        pill.title = "Already on this client's task list";
+        targetsBox.innerHTML = `<div class="targetrow">
+          <div class="targetstat"><b>${calc.bmr}</b><span>BMR</span></div>
+          <div class="targetstat"><b>${calc.tdee}</b><span>TDEE</span></div>
+          <div class="targetstat"><b>${calc.calories}</b><span>Calories</span></div>
+          <div class="targetstat"><b>${calc.proteinG}g</b><span>Protein</span></div>
+          <div class="targetstat"><b>${calc.carbG}g</b><span>Carbs</span></div>
+          <div class="targetstat"><b>${calc.fatG}g</b><span>Fat</span></div>
+        </div>`;
       }
-      pillRow.appendChild(pill);
-    });
-    presetsDetails.appendChild(pillRow);
+      body.appendChild(targetsBox);
+      const targetsScopeNote = document.createElement("div");
+      targetsScopeNote.className = "scopenote";
+      targetsScopeNote.textContent = "Estimated from standard formulas (Mifflin-St Jeor + activity level), not medical or dietetic advice — a starting point for the Nutrition tab, to adjust from how the client actually responds.";
+      body.appendChild(targetsScopeNote);
   });
-  addPanel.appendChild(presetsDetails);
 
-  const customDraftsLabel = document.createElement("div");
-  customDraftsLabel.className = "customdraftslabel";
-  customDraftsLabel.textContent = "Custom tasks";
-  addPanel.appendChild(customDraftsLabel);
-  if(pendingCustomDrafts.length){
-    const draftsList = document.createElement("div");
-    draftsList.className = "tasklist";
-    pendingCustomDrafts.forEach(d => {
-      const row = document.createElement("div");
-      row.className = "taskrow";
-      row.innerHTML = `
-        <input type="text" value="${esc(d.title||"")}" placeholder="e.g. Foam roll 10 min">
-        <select>
-          <option value="daily" ${(!d.freq || d.freq === "daily") ? "selected" : ""}>Daily</option>
-          <option value="weekly" ${d.freq === "weekly" ? "selected" : ""}>Weekly</option>
-          <option value="days" ${d.freq === "days" ? "selected" : ""}>Specific days</option>
-        </select>
-        ${d.freq === "weekly" ? `<span style="font-size:12px;color:var(--ink-dim);">×</span><input type="number" min="1" max="14" value="${d.target||3}"><span style="font-size:12px;color:var(--ink-dim);">/week</span>` : ""}
-        <button class="taskrmbtn" type="button" title="Remove this draft">✕</button>
-        ${d.freq === "days" ? '<div class="daychips" data-role="daychips"></div>' : ""}
+  const accessPill = buildClientProfilePill(client, "access", "Access", false, body => {
+      const accessLabel = document.createElement("div");
+      accessLabel.className = "field-label";
+      accessLabel.textContent = "Client Access";
+      body.appendChild(accessLabel);
+      const accessBox = document.createElement("div");
+      accessBox.className = "accesscodebox";
+      accessBox.innerHTML = `
+        <span>Access code:</span>
+        <span class="accesscodeval" id="accessCodeVal">${esc(client.accessCode)}</span>
+        <button class="accesscopybtn" id="copyAccessBtn" type="button">Copy</button>
+        <button class="accessregenbtn" id="regenAccessBtn" type="button">Regenerate</button>
       `;
-      row.querySelector('input[type="text"]').addEventListener("input", e => { d.title = e.target.value; markTaskDraftDirty(client.id); refreshSaveTasksBtn(); });
-      row.querySelector("select").addEventListener("change", e => {
-        d.freq = e.target.value;
-        if(d.freq === "weekly" && !d.target) d.target = 3;
-        if(d.freq === "days" && !d.days) d.days = [];
-        renderClientProfile();
-      });
-      const targetInp = row.querySelector('input[type="number"]');
-      if(targetInp){
-        targetInp.addEventListener("input", e => { d.target = Math.max(1, parseInt(e.target.value, 10) || 1); });
+      body.appendChild(accessBox);
+      const accessHint = document.createElement("div");
+      accessHint.className = "statshint";
+      accessHint.textContent = "Share this code with " + (client.name || "this client") + " along with the link to this page — they'll use it to log in to their own view of just their program, rehab plan, goals and tasks, without seeing anyone else's.";
+      body.appendChild(accessHint);
+
+      // Set automatically for anyone who joined via the Stripe payment link
+      // (see api/stripe-webhook.js); editable here too, so a client added by
+      // hand can also get their code emailed. The Resend button is the manual
+      // safety net for whenever the automatic email doesn't land -- Resend
+      // (or any email service) occasionally has a hiccup or a message gets
+      // stuck in spam.
+      const resendBox = document.createElement("div");
+        resendBox.className = "accesscodebox";
+        resendBox.innerHTML = `<button class="accesscopybtn" id="resendAccessEmailBtn" type="button">Resend access code by email</button>`;
+        body.appendChild(resendBox);
+      const resendStatus = document.createElement("div");
+      resendStatus.className = "statshint";
+      resendStatus.id = "resendAccessEmailStatus";
+      body.appendChild(resendStatus);
+      if(client.accessCodeEmailSent === false){
+        const warn = document.createElement("div");
+        warn.className = "gateerror";
+        warn.style.marginTop = "0";
+        warn.textContent = "⚠ The automatic welcome email didn't go out when they joined — use \"Resend access code by email\" above once you've checked their email address.";
+        body.appendChild(warn);
       }
-      const dayChipsEl = row.querySelector('[data-role="daychips"]');
-      if(dayChipsEl){
-        buildDayChips(dayChipsEl, d.days, v => {
-          const i = (d.days || []).indexOf(v);
-          d.days = i > -1 ? d.days.filter(x => x !== v) : (d.days || []).concat([v]);
-          renderClientProfile();
+
+      const visLabel = document.createElement("div");
+      visLabel.className = "field-label";
+      visLabel.textContent = "Client View Access";
+      body.appendChild(visLabel);
+      const visHint = document.createElement("div");
+      visHint.className = "statshint";
+      visHint.textContent = "Choose what " + (client.name || "this client") + " can see under The Road Map in their own view. Turning something off hides it everywhere for them, including anything already scheduled into their agenda.";
+      body.appendChild(visHint);
+      const visBox = document.createElement("div");
+      visBox.className = "visibilitytoggles";
+      [
+        {key: "training", label: "Training Program"},
+        {key: "rehab", label: "Rehab"},
+        {key: "nutrition", label: "Nutrition"},
+      ].forEach(({key, label}) => {
+        const row = document.createElement("label");
+        row.className = "cmsuggesttogglelabel";
+        row.innerHTML = `<input type="checkbox" ${client.visibility[key] !== false ? "checked" : ""}> ${esc(label)}`;
+        row.querySelector("input").addEventListener("change", e => {
+          // Cloned rather than mutated in place -- same reasoning as the
+          // agendaNotes edits just below: keeps this a single, whole-object
+          // reassignment so there's no ambiguity about what scheduleClientSave
+          // is about to persist.
+          client.visibility = Object.assign({}, client.visibility, {[key]: e.target.checked});
+          scheduleClientSave(client);
         });
-      }
-      row.querySelector(".taskrmbtn").addEventListener("click", () => {
-        pendingCustomDrafts = pendingCustomDrafts.filter(x => x.id !== d.id);
-        renderClientProfile();
+        visBox.appendChild(row);
       });
-      draftsList.appendChild(row);
-    });
-    addPanel.appendChild(draftsList);
-  }
-
-  const addDraftBtn = document.createElement("button");
-  addDraftBtn.className = "addtaskbtn";
-  addDraftBtn.type = "button";
-  addDraftBtn.textContent = "+ Add Custom Task";
-  addDraftBtn.addEventListener("click", () => {
-    pendingCustomDrafts.push({id: rid(), title: "", freq: "daily", target: null});
-    renderClientProfile();
-    requestAnimationFrame(() => {
-      const rows = document.querySelectorAll(".addtaskspanel .taskrow input[type='text']");
-      const last = rows[rows.length - 1];
-      if(last) last.focus();
-    });
+      body.appendChild(visBox);
   });
-  addPanel.appendChild(addDraftBtn);
 
-  // A live count so it's obvious, before saving, exactly how many things
-  // are queued up -- this is what actually delivers "multi-select": tick
-  // several suggestions and/or add several custom drafts, watch the count
-  // climb, then Save them all in one action.
-  function currentPendingCount(){
-    return pendingPresetTitles.size + pendingCustomDrafts.filter(d => (d.title||"").trim()).length;
-  }
-  const saveTasksBtn = document.createElement("button");
-  saveTasksBtn.className = "savetasksbtn";
-  saveTasksBtn.type = "button";
-  function refreshSaveTasksBtn(){
-    const n = currentPendingCount();
-    saveTasksBtn.disabled = n === 0;
-    saveTasksBtn.textContent = n > 0
-      ? `💾 Save ${n} Task${n === 1 ? "" : "s"} to ${client.name || "This Client"}'s List`
-      : "💾 Save Tasks";
-  }
-  refreshSaveTasksBtn();
-  saveTasksBtn.addEventListener("click", () => {
-    // Belt-and-suspenders: re-fetch the client fresh from clientsCache by
-    // id right here, instead of trusting the `client` this button's own
-    // render closed over. clientsCache entries get replaced wholesale by
-    // background snapshots, and if that ever slips past the protection
-    // above (a case we haven't been able to pin down yet), pushing onto a
-    // stale, detached copy would make Save look like it silently does
-    // nothing -- exactly what's been reported. Falling back to the closure
-    // value only if a fresh lookup somehow comes up empty keeps this from
-    // ever being worse than before.
-    const liveClient = clientsCache.find(c => c.id === client.id) || client;
-    try{
-      // Build the new rows in a fresh, plain local array and concat it onto
-      // liveClient.tasks in ONE reassignment at the end, rather than
-      // .push()-ing straight onto liveClient.tasks -- that array can come
-      // straight from a db snapshot, and .push() throws on those
-      // ("Attempted to assign to readonly property") because the real db
-      // capability hands back frozen/read-only nested arrays. Reassigning
-      // the whole property to a brand-new array is always safe.
-      const newTasks = [];
-      Object.keys(TASK_PRESETS).forEach(category => {
-        TASK_PRESETS[category].forEach(preset => {
-          if(pendingPresetTitles.has(preset.title) && !liveClient.tasks.some(t => t.title === preset.title)){
-            newTasks.push({
-              id: rid(), title: preset.title, freq: preset.freq,
-              target: preset.freq === "weekly" ? (preset.target || 3) : null, completions: {},
+  const goalsPill = buildClientProfilePill(client, "goals", "Goals", false, body => {
+      const goalsLabel = document.createElement("div");
+      goalsLabel.className = "field-label";
+      goalsLabel.textContent = "Goals";
+      body.appendChild(goalsLabel);
+      const goalsHint = document.createElement("div");
+      goalsHint.className = "statshint";
+      goalsHint.textContent = "Visible to " + (client.name || "this client") + " — they can also fill this in themselves from their own view.";
+      body.appendChild(goalsHint);
+      const goalsBox = document.createElement("textarea");
+      goalsBox.className = "diagnosisbox";
+      goalsBox.rows = 2;
+      goalsBox.placeholder = "e.g. Build to a 140kg back squat by December; stay pain-free through preseason.";
+      goalsBox.value = client.goals || "";
+      goalsBox.addEventListener("input", e => { client.goals = e.target.value; scheduleClientSave(client); });
+      goalsBox.addEventListener("blur", e => {
+        appendGoalsLogEntry(client, e.target.value);
+        scheduleClientSave(client);
+      });
+      body.appendChild(goalsBox);
+      const goalsHist = buildGoalsHistoryBox(client);
+      if(goalsHist) body.appendChild(goalsHist);
+
+  });
+
+  const notesPill = buildClientProfilePill(client, "notes", "Coach Notes (private)", false, body => {
+      const notesLabel = document.createElement("div");
+      notesLabel.className = "field-label";
+      notesLabel.textContent = "Coach Notes (private)";
+      body.appendChild(notesLabel);
+      const notesHint = document.createElement("div");
+      notesHint.className = "statshint";
+      notesHint.textContent = "Only you can see this — it's never shown in " + (client.name || "this client") + "'s own view.";
+      body.appendChild(notesHint);
+      const notesBox = document.createElement("textarea");
+      notesBox.className = "diagnosisbox";
+      notesBox.rows = 2;
+      notesBox.placeholder = "Anything worth remembering about this client — availability, equipment, preferences…";
+      notesBox.value = client.notes || "";
+      notesBox.addEventListener("input", e => { client.notes = e.target.value; scheduleClientSave(client); });
+      body.appendChild(notesBox);
+  });
+
+  const sessionLogPill = buildClientProfilePill(client, "sessionlog", "Session Notes (from Client)", false, body => {
+      const sessionLogLabel = document.createElement("div");
+      sessionLogLabel.className = "field-label";
+      sessionLogLabel.textContent = "Session Notes (from Client)";
+      body.appendChild(sessionLogLabel);
+      const sessionLogHint = document.createElement("div");
+      sessionLogHint.className = "statshint";
+      sessionLogHint.textContent = "What " + (client.name || "this client") + " logged when they saved a finished training session — RPE and any notes they added. Visible only to you.";
+      body.appendChild(sessionLogHint);
+      const sessionLogHist = buildSessionLogHistoryBox(client);
+      if(sessionLogHist){
+        body.appendChild(sessionLogHist);
+      } else {
+        const emptyEl = document.createElement("div");
+        emptyEl.className = "cmempty";
+        emptyEl.textContent = "No sessions logged yet.";
+        body.appendChild(emptyEl);
+      }
+
+  });
+
+  const tasksPill = buildClientProfilePill(client, "tasks", "Habit Builders", false, body => {
+      const taskLabel = document.createElement("div");
+      taskLabel.className = "field-label";
+      taskLabel.textContent = "Assigned Tasks";
+      body.appendChild(taskLabel);
+      const taskHint = document.createElement("div");
+      taskHint.className = "statshint";
+      taskHint.innerHTML = "Tasks assigned so far — each becomes a real tick-box in <b>" + esc(client.name || "the client") + "'s own view</b> (open &#34;👁 Preview Client View&#34; above to see it). Use the panel below to add more.";
+      body.appendChild(taskHint);
+      const taskList = document.createElement("div");
+      taskList.className = "tasklist";
+      if(!client.tasks.length){
+        taskList.innerHTML = '<div class="emptyprogs">No tasks assigned yet — add some below.</div>';
+      } else {
+        client.tasks.forEach(t => {
+          const row = document.createElement("div");
+          row.className = "taskrow";
+          const freqIcon = t.freq === "weekly" ? "🔁" : (t.freq === "days" ? "📅" : "☐");
+          row.innerHTML = `
+            <span class="taskrowicon" title="Shows as a checkbox in the client's view">${freqIcon}</span>
+            <input type="text" value="${esc(t.title||"")}" placeholder="e.g. Foam roll 10 min">
+            <select>
+              <option value="daily" ${(!t.freq || t.freq === "daily") ? "selected" : ""}>Daily</option>
+              <option value="weekly" ${t.freq === "weekly" ? "selected" : ""}>Weekly</option>
+              <option value="days" ${t.freq === "days" ? "selected" : ""}>Specific days</option>
+            </select>
+            ${t.freq === "weekly" ? `<span style="font-size:12px;color:var(--ink-dim);">×</span><input type="number" min="1" max="14" value="${t.target||3}"><span style="font-size:12px;color:var(--ink-dim);">/week</span>` : ""}
+            <button class="taskrmbtn" type="button" title="Remove task">✕</button>
+            ${t.freq === "days" ? '<div class="daychips" data-role="daychips"></div>' : ""}
+          `;
+          row.querySelector('input[type="text"]').addEventListener("input", e => { t.title = e.target.value; scheduleClientSave(client); });
+          row.querySelector("select").addEventListener("change", e => {
+            t.freq = e.target.value;
+            if(t.freq === "weekly" && !t.target) t.target = 3;
+            if(t.freq === "days" && !t.days) t.days = [];
+            renderClientProfile();
+            scheduleClientSave(client);
+          });
+          const targetInp = row.querySelector('input[type="number"]');
+          if(targetInp){
+            targetInp.addEventListener("input", e => { t.target = Math.max(1, parseInt(e.target.value, 10) || 1); scheduleClientSave(client); });
+          }
+          const dayChipsEl = row.querySelector('[data-role="daychips"]');
+          if(dayChipsEl){
+            buildDayChips(dayChipsEl, t.days, v => {
+              const i = (t.days || []).indexOf(v);
+              t.days = i > -1 ? t.days.filter(x => x !== v) : (t.days || []).concat([v]);
+              scheduleClientSave(client);
+              renderClientProfile();
             });
           }
+          row.querySelector(".taskrmbtn").addEventListener("click", () => {
+            client.tasks = client.tasks.filter(x => x.id !== t.id);
+            renderClientProfile();
+            scheduleClientSave(client);
+          });
+          taskList.appendChild(row);
+        });
+      }
+      body.appendChild(taskList);
+
+      // Adding tasks is a deliberate two-step "pick, then Save" flow: ticking a
+      // suggestion or typing a custom task only queues it here -- nothing lands
+      // on the client's real list, and nothing is saved, until Save is pressed.
+      // That single, explicit confirmation moment (with a visible "Saved N
+      // tasks" message right after) removes any doubt about whether an action
+      // "took", multi-select falls out for free, and it matches how a lot of
+      // people expect a "choose some things, then confirm" panel to work.
+      if(pendingTasksClientId !== client.id){
+        pendingTasksClientId = client.id;
+        pendingPresetTitles = new Set();
+        pendingCustomDrafts = [];
+      }
+
+      const addPanel = document.createElement("div");
+      addPanel.className = "addtaskspanel";
+      const addPanelLabel = document.createElement("div");
+      addPanelLabel.className = "field-label";
+      addPanelLabel.style.marginTop = "0";
+      addPanelLabel.textContent = "Add Tasks";
+      addPanel.appendChild(addPanelLabel);
+      const addPanelHint = document.createElement("div");
+      addPanelHint.className = "statshint";
+      addPanelHint.textContent = "Tick any suggestions below and/or type your own — pick as many as you like, then hit Save to add them all to " + (client.name || "this client") + "'s list at once.";
+      addPanel.appendChild(addPanelHint);
+
+      const presetsDetails = document.createElement("details");
+      presetsDetails.className = "taskpresets";
+      presetsDetails.open = taskPresetsOpen;
+      presetsDetails.addEventListener("toggle", () => { taskPresetsOpen = presetsDetails.open; });
+      const presetsSummary = document.createElement("summary");
+      presetsSummary.textContent = "Suggested tasks & habit builders";
+      presetsDetails.appendChild(presetsSummary);
+      Object.keys(TASK_PRESETS).forEach(category => {
+        const catLabel = document.createElement("div");
+        catLabel.className = "taskpresetcat";
+        catLabel.textContent = category;
+        presetsDetails.appendChild(catLabel);
+        const pillRow = document.createElement("div");
+        pillRow.className = "pills";
+        TASK_PRESETS[category].forEach(preset => {
+          const alreadyAdded = client.tasks.some(t => t.title === preset.title);
+          const picked = pendingPresetTitles.has(preset.title);
+          const pill = document.createElement("button");
+          pill.type = "button";
+          pill.className = "pill taskpresetpill" + (alreadyAdded ? " zero" : (picked ? " picked" : ""));
+          pill.textContent = (alreadyAdded ? "✓ " : (picked ? "☑ " : "☐ ")) + preset.title + (preset.freq === "weekly" ? ` · ${preset.target}x/wk` : "");
+          if(!alreadyAdded){
+            pill.title = picked ? "Selected -- click to remove from this batch" : "Click to select, then hit Save below";
+            pill.addEventListener("click", () => {
+              if(pendingPresetTitles.has(preset.title)) pendingPresetTitles.delete(preset.title);
+              else pendingPresetTitles.add(preset.title);
+              renderClientProfile();
+            });
+          } else {
+            pill.title = "Already on this client's task list";
+          }
+          pillRow.appendChild(pill);
+        });
+        presetsDetails.appendChild(pillRow);
+      });
+      addPanel.appendChild(presetsDetails);
+
+      const customDraftsLabel = document.createElement("div");
+      customDraftsLabel.className = "customdraftslabel";
+      customDraftsLabel.textContent = "Custom tasks";
+      addPanel.appendChild(customDraftsLabel);
+      if(pendingCustomDrafts.length){
+        const draftsList = document.createElement("div");
+        draftsList.className = "tasklist";
+        pendingCustomDrafts.forEach(d => {
+          const row = document.createElement("div");
+          row.className = "taskrow";
+          row.innerHTML = `
+            <input type="text" value="${esc(d.title||"")}" placeholder="e.g. Foam roll 10 min">
+            <select>
+              <option value="daily" ${(!d.freq || d.freq === "daily") ? "selected" : ""}>Daily</option>
+              <option value="weekly" ${d.freq === "weekly" ? "selected" : ""}>Weekly</option>
+              <option value="days" ${d.freq === "days" ? "selected" : ""}>Specific days</option>
+            </select>
+            ${d.freq === "weekly" ? `<span style="font-size:12px;color:var(--ink-dim);">×</span><input type="number" min="1" max="14" value="${d.target||3}"><span style="font-size:12px;color:var(--ink-dim);">/week</span>` : ""}
+            <button class="taskrmbtn" type="button" title="Remove this draft">✕</button>
+            ${d.freq === "days" ? '<div class="daychips" data-role="daychips"></div>' : ""}
+          `;
+          row.querySelector('input[type="text"]').addEventListener("input", e => { d.title = e.target.value; markTaskDraftDirty(client.id); refreshSaveTasksBtn(); });
+          row.querySelector("select").addEventListener("change", e => {
+            d.freq = e.target.value;
+            if(d.freq === "weekly" && !d.target) d.target = 3;
+            if(d.freq === "days" && !d.days) d.days = [];
+            renderClientProfile();
+          });
+          const targetInp = row.querySelector('input[type="number"]');
+          if(targetInp){
+            targetInp.addEventListener("input", e => { d.target = Math.max(1, parseInt(e.target.value, 10) || 1); });
+          }
+          const dayChipsEl = row.querySelector('[data-role="daychips"]');
+          if(dayChipsEl){
+            buildDayChips(dayChipsEl, d.days, v => {
+              const i = (d.days || []).indexOf(v);
+              d.days = i > -1 ? d.days.filter(x => x !== v) : (d.days || []).concat([v]);
+              renderClientProfile();
+            });
+          }
+          row.querySelector(".taskrmbtn").addEventListener("click", () => {
+            pendingCustomDrafts = pendingCustomDrafts.filter(x => x.id !== d.id);
+            renderClientProfile();
+          });
+          draftsList.appendChild(row);
+        });
+        addPanel.appendChild(draftsList);
+      }
+
+      const addDraftBtn = document.createElement("button");
+      addDraftBtn.className = "addtaskbtn";
+      addDraftBtn.type = "button";
+      addDraftBtn.textContent = "+ Add Custom Task";
+      addDraftBtn.addEventListener("click", () => {
+        pendingCustomDrafts.push({id: rid(), title: "", freq: "daily", target: null});
+        renderClientProfile();
+        requestAnimationFrame(() => {
+          const rows = document.querySelectorAll(".addtaskspanel .taskrow input[type='text']");
+          const last = rows[rows.length - 1];
+          if(last) last.focus();
         });
       });
-      pendingCustomDrafts.forEach(d => {
-        const title = (d.title || "").trim();
-        if(!title) return;
-        const newTask = {
-          id: rid(), title, freq: d.freq || "daily",
-          target: d.freq === "weekly" ? Math.max(1, d.target || 3) : null, completions: {},
-        };
-        if(d.freq === "days") newTask.days = (d.days || []).slice();
-        newTasks.push(newTask);
+      addPanel.appendChild(addDraftBtn);
+
+      // A live count so it's obvious, before saving, exactly how many things
+      // are queued up -- this is what actually delivers "multi-select": tick
+      // several suggestions and/or add several custom drafts, watch the count
+      // climb, then Save them all in one action.
+      function currentPendingCount(){
+        return pendingPresetTitles.size + pendingCustomDrafts.filter(d => (d.title||"").trim()).length;
+      }
+      const saveTasksBtn = document.createElement("button");
+      saveTasksBtn.className = "savetasksbtn";
+      saveTasksBtn.type = "button";
+      function refreshSaveTasksBtn(){
+        const n = currentPendingCount();
+        saveTasksBtn.disabled = n === 0;
+        saveTasksBtn.textContent = n > 0
+          ? `💾 Save ${n} Task${n === 1 ? "" : "s"} to ${client.name || "This Client"}'s List`
+          : "💾 Save Tasks";
+      }
+      refreshSaveTasksBtn();
+      saveTasksBtn.addEventListener("click", () => {
+        // Belt-and-suspenders: re-fetch the client fresh from clientsCache by
+        // id right here, instead of trusting the `client` this button's own
+        // render closed over. clientsCache entries get replaced wholesale by
+        // background snapshots, and if that ever slips past the protection
+        // above (a case we haven't been able to pin down yet), pushing onto a
+        // stale, detached copy would make Save look like it silently does
+        // nothing -- exactly what's been reported. Falling back to the closure
+        // value only if a fresh lookup somehow comes up empty keeps this from
+        // ever being worse than before.
+        const liveClient = clientsCache.find(c => c.id === client.id) || client;
+        try{
+          // Build the new rows in a fresh, plain local array and concat it onto
+          // liveClient.tasks in ONE reassignment at the end, rather than
+          // .push()-ing straight onto liveClient.tasks -- that array can come
+          // straight from a db snapshot, and .push() throws on those
+          // ("Attempted to assign to readonly property") because the real db
+          // capability hands back frozen/read-only nested arrays. Reassigning
+          // the whole property to a brand-new array is always safe.
+          const newTasks = [];
+          Object.keys(TASK_PRESETS).forEach(category => {
+            TASK_PRESETS[category].forEach(preset => {
+              if(pendingPresetTitles.has(preset.title) && !liveClient.tasks.some(t => t.title === preset.title)){
+                newTasks.push({
+                  id: rid(), title: preset.title, freq: preset.freq,
+                  target: preset.freq === "weekly" ? (preset.target || 3) : null, completions: {},
+                });
+              }
+            });
+          });
+          pendingCustomDrafts.forEach(d => {
+            const title = (d.title || "").trim();
+            if(!title) return;
+            const newTask = {
+              id: rid(), title, freq: d.freq || "daily",
+              target: d.freq === "weekly" ? Math.max(1, d.target || 3) : null, completions: {},
+            };
+            if(d.freq === "days") newTask.days = (d.days || []).slice();
+            newTasks.push(newTask);
+          });
+          if(newTasks.length) liveClient.tasks = (liveClient.tasks || []).concat(newTasks);
+          const added = newTasks.length;
+          pendingPresetTitles = new Set();
+          pendingCustomDrafts = [];
+          // No draft field is mid-keystroke anymore -- clear this right away
+          // rather than waiting out its timer, so a background snapshot (e.g.
+          // the real save we're about to kick off, landing) isn't held back
+          // from showing the just-saved tasks.
+          delete taskDraftDirtyIds[liveClient.id];
+          clearTimeout(taskDraftDirtyTimers[liveClient.id]);
+          // Always show SOMETHING after a Save click -- silence is exactly
+          // what's been reported as "nothing happens", so even the (should be
+          // rare/impossible given the button is disabled at 0) zero-added case
+          // gets a visible, honest message instead of quietly doing nothing.
+          const confirmMsg = added > 0
+            ? `✓ Saved ${added} task${added === 1 ? "" : "s"} to ${liveClient.name || "this client"}'s list — they'll see ${added === 1 ? "it" : "them"} as tick-boxes in their own view.`
+            : "Nothing new to save -- everything selected was already on the list.";
+          renderClientProfile();
+          scheduleClientSave(liveClient);
+          showTaskSaveConfirmation(confirmMsg);
+        }catch(err){
+          // Diagnostic safety net, same idea as the render-level one above:
+          // repeated reports of "I hit Save and nothing happens" with no
+          // reproduction locally means something is throwing in a real
+          // account's data that isn't caught anywhere else. Surface it loudly
+          // instead of letting the click silently do nothing.
+          console.error("[SaveTasksClickError]", err);
+          showTaskSaveConfirmation("Something went wrong saving these tasks (" + (err && err.message ? err.message : String(err)) + "). Nothing was lost -- try again, and let your coach-tool developer know this message if it keeps happening.", true);
+        }
       });
-      if(newTasks.length) liveClient.tasks = (liveClient.tasks || []).concat(newTasks);
-      const added = newTasks.length;
-      pendingPresetTitles = new Set();
-      pendingCustomDrafts = [];
-      // No draft field is mid-keystroke anymore -- clear this right away
-      // rather than waiting out its timer, so a background snapshot (e.g.
-      // the real save we're about to kick off, landing) isn't held back
-      // from showing the just-saved tasks.
-      delete taskDraftDirtyIds[liveClient.id];
-      clearTimeout(taskDraftDirtyTimers[liveClient.id]);
-      // Always show SOMETHING after a Save click -- silence is exactly
-      // what's been reported as "nothing happens", so even the (should be
-      // rare/impossible given the button is disabled at 0) zero-added case
-      // gets a visible, honest message instead of quietly doing nothing.
-      const confirmMsg = added > 0
-        ? `✓ Saved ${added} task${added === 1 ? "" : "s"} to ${liveClient.name || "this client"}'s list — they'll see ${added === 1 ? "it" : "them"} as tick-boxes in their own view.`
-        : "Nothing new to save -- everything selected was already on the list.";
-      renderClientProfile();
-      scheduleClientSave(liveClient);
-      showTaskSaveConfirmation(confirmMsg);
-    }catch(err){
-      // Diagnostic safety net, same idea as the render-level one above:
-      // repeated reports of "I hit Save and nothing happens" with no
-      // reproduction locally means something is throwing in a real
-      // account's data that isn't caught anywhere else. Surface it loudly
-      // instead of letting the click silently do nothing.
-      console.error("[SaveTasksClickError]", err);
-      showTaskSaveConfirmation("Something went wrong saving these tasks (" + (err && err.message ? err.message : String(err)) + "). Nothing was lost -- try again, and let your coach-tool developer know this message if it keeps happening.", true);
-    }
+      addPanel.appendChild(saveTasksBtn);
+
+      const taskSaveConfirm = document.createElement("div");
+      taskSaveConfirm.className = "taskconfirm";
+      taskSaveConfirm.id = "taskSaveConfirm";
+      taskSaveConfirm.hidden = true;
+      addPanel.appendChild(taskSaveConfirm);
+
+      body.appendChild(addPanel);
   });
-  addPanel.appendChild(saveTasksBtn);
 
-  const taskSaveConfirm = document.createElement("div");
-  taskSaveConfirm.className = "taskconfirm";
-  taskSaveConfirm.id = "taskSaveConfirm";
-  taskSaveConfirm.hidden = true;
-  addPanel.appendChild(taskSaveConfirm);
+  const weeklyGoalsPill = buildClientProfilePill(client, "weeklygoals", "This Week's Goals (set by client)", false, body => {
+      const wgLabel = document.createElement("div");
+      wgLabel.className = "field-label";
+      wgLabel.textContent = "This Week's Goals (set by client)";
+      body.appendChild(wgLabel);
+      const wgHint = document.createElement("div");
+      wgHint.className = "statshint";
+      wgHint.textContent = (client.name || "The client") + " sets and checks these off themselves from their own view — a fresh list each week.";
+      body.appendChild(wgHint);
+      const wgList = document.createElement("div");
+      const weekGoals = currentWeekGoals(client);
+      if(!weekGoals.length){
+        wgList.innerHTML = '<div class="emptyprogs">No goals set for this week yet.</div>';
+      } else {
+        weekGoals.forEach(g => {
+          const row = document.createElement("div");
+          // Completion is now tracked per date (see setGoalCompletionEntry), not
+          // as a single shared done flag, so a goal spanning several days shows
+          // how many of ITS applicable days are ticked off so far this week
+          // instead of one all-or-nothing checkmark.
+          const weekDates = currentWeekDates();
+          const applicableDates = weekDates.filter(wd => !g.days || !g.days.length || g.days.includes(wd.key));
+          const completions = g.completions || {};
+          const doneCount = applicableDates.filter(wd => completions[wd.date]).length;
+          // A single-day goal is simply "done" or not, same as before. A goal
+          // that spans several days (or every day) gets the strikethrough as
+          // soon as the client has ticked it off at least once this week -- the
+          // days-done count alongside it shows exactly how much progress that is.
+          const hasProgress = doneCount > 0;
+          row.className = "weeklygoalro" + (hasProgress ? " done" : "");
+          const daysNote = (g.days && g.days.length)
+            ? ` <span class="statscope">(${esc(g.days.map(k => (WEEKDAYS.find(w => w.key === k) || {}).short || k).join(", "))})</span>`
+            : "";
+          const progressNote = applicableDates.length > 1
+            ? ` <span class="statscope">${doneCount}/${applicableDates.length} days done</span>`
+            : "";
+          row.innerHTML = `<span class="wgdot"></span><span>${esc(g.text||"")}</span>${daysNote}${progressNote}`;
+          wgList.appendChild(row);
+        });
+      }
+      body.appendChild(wgList);
+  });
 
-  wrap.appendChild(addPanel);
+  const agendaNotesPill = buildClientProfilePill(client, "agendanotes", "Daily Agenda Notes", false, body => {
+      client.agendaNotes = client.agendaNotes || {};
+      const agendaNotesLabel = document.createElement("div");
+      agendaNotesLabel.className = "field-label";
+      agendaNotesLabel.textContent = "Daily Agenda Notes";
+      body.appendChild(agendaNotesLabel);
+      const agendaNotesHint = document.createElement("div");
+      agendaNotesHint.className = "statshint";
+      agendaNotesHint.textContent = "Shown to " + (client.name || "this client") + " on that day in their Daily Agenda — e.g. a reminder for a specific day, unlike the private notes above.";
+      body.appendChild(agendaNotesHint);
+      const agendaNotesBox = document.createElement("div");
+      agendaNotesBox.className = "agendanoteseditor";
+      WEEKDAYS.forEach(wd => {
+        const row = document.createElement("div");
+        row.className = "agendanoterow";
+        row.innerHTML = `<span class="agendanotedaylabel">${wd.short}</span><input type="text" maxlength="200" value="${esc(client.agendaNotes[wd.key]||"")}" placeholder="e.g. Meal prep today">`;
+        row.querySelector("input").addEventListener("input", e => {
+          client.agendaNotes = Object.assign({}, client.agendaNotes || {});
+          client.agendaNotes[wd.key] = e.target.value;
+          scheduleClientSave(client);
+        });
+        agendaNotesBox.appendChild(row);
+      });
+      body.appendChild(agendaNotesBox);
+  });
 
-  const wgLabel = document.createElement("div");
-  wgLabel.className = "field-label";
-  wgLabel.textContent = "This Week's Goals (set by client)";
-  wrap.appendChild(wgLabel);
-  const wgHint = document.createElement("div");
-  wgHint.className = "statshint";
-  wgHint.textContent = (client.name || "The client") + " sets and checks these off themselves from their own view — a fresh list each week.";
-  wrap.appendChild(wgHint);
-  const wgList = document.createElement("div");
-  const weekGoals = currentWeekGoals(client);
-  if(!weekGoals.length){
-    wgList.innerHTML = '<div class="emptyprogs">No goals set for this week yet.</div>';
-  } else {
-    weekGoals.forEach(g => {
-      const row = document.createElement("div");
-      // Completion is now tracked per date (see setGoalCompletionEntry), not
-      // as a single shared done flag, so a goal spanning several days shows
-      // how many of ITS applicable days are ticked off so far this week
-      // instead of one all-or-nothing checkmark.
-      const weekDates = currentWeekDates();
-      const applicableDates = weekDates.filter(wd => !g.days || !g.days.length || g.days.includes(wd.key));
-      const completions = g.completions || {};
-      const doneCount = applicableDates.filter(wd => completions[wd.date]).length;
-      // A single-day goal is simply "done" or not, same as before. A goal
-      // that spans several days (or every day) gets the strikethrough as
-      // soon as the client has ticked it off at least once this week -- the
-      // days-done count alongside it shows exactly how much progress that is.
-      const hasProgress = doneCount > 0;
-      row.className = "weeklygoalro" + (hasProgress ? " done" : "");
-      const daysNote = (g.days && g.days.length)
-        ? ` <span class="statscope">(${esc(g.days.map(k => (WEEKDAYS.find(w => w.key === k) || {}).short || k).join(", "))})</span>`
-        : "";
-      const progressNote = applicableDates.length > 1
-        ? ` <span class="statscope">${doneCount}/${applicableDates.length} days done</span>`
-        : "";
-      row.innerHTML = `<span class="wgdot"></span><span>${esc(g.text||"")}</span>${daysNote}${progressNote}`;
-      wgList.appendChild(row);
-    });
-  }
-  wrap.appendChild(wgList);
+  const trainingPlanPill = buildClientProfilePill(client, "trainingplan", "Training Plan", false, body => {
+      body.appendChild(buildClientProfilePill(client, "liftingstats", "Lifting Stats", true, body => {
+          body.appendChild(buildStatsBox(null, client));
+      }, "cmnestedpill"));
 
-  const linkedPrograms = programsCache.filter(p => programHasClient(p, client.id));
-  const progLabel = document.createElement("div");
-  progLabel.className = "field-label";
-  progLabel.textContent = "Programs";
-  wrap.appendChild(progLabel);
-  const progList = document.createElement("div");
-  progList.className = "clientlinklist";
-  if(!linkedPrograms.length){
-    progList.innerHTML = '<div class="emptyprogs">No programs linked yet — link this client from a program&#39;s Client picker in Program Builder.</div>';
-  } else {
-    linkedPrograms.forEach(p => {
-      const days = p.days || [];
-      const exCount = days.reduce((n, d) => n + (d.exercises ? d.exercises.length : 0), 0);
-      const card = document.createElement("div");
-      card.className = "clientlinkcard";
-      card.innerHTML = `
-        <div><b>${esc(p.name||"Untitled Program")}</b><span class="meta">${p.weeks > 1 ? fmtCount(p.weeks,"week") + " · " : ""}${fmtCount(days.length,"day")} · ${fmtCount(exCount,"exercise")}</span></div>
-        <button class="openlinkbtn" type="button">Open in Program Builder →</button>
-      `;
-      card.querySelector(".openlinkbtn").addEventListener("click", () => openProgramFromClient(p));
-      progList.appendChild(card);
-    });
-  }
-  wrap.appendChild(progList);
+      body.appendChild(buildClientProfilePill(client, "programs", "Programs", true, body => {
+          const linkedPrograms = programsCache.filter(p => programHasClient(p, client.id));
+          const progLabel = document.createElement("div");
+          progLabel.className = "field-label";
+          progLabel.textContent = "Programs";
+          body.appendChild(progLabel);
+          const progList = document.createElement("div");
+          progList.className = "clientlinklist";
+          if(!linkedPrograms.length){
+            progList.innerHTML = '<div class="emptyprogs">No programs linked yet — link this client from a program&#39;s Client picker in Program Builder.</div>';
+          } else {
+            linkedPrograms.forEach(p => {
+              const days = p.days || [];
+              const exCount = days.reduce((n, d) => n + (d.exercises ? d.exercises.length : 0), 0);
+              const card = document.createElement("div");
+              card.className = "clientlinkcard";
+              card.innerHTML = `
+                <div><b>${esc(p.name||"Untitled Program")}</b><span class="meta">${p.weeks > 1 ? fmtCount(p.weeks,"week") + " · " : ""}${fmtCount(days.length,"day")} · ${fmtCount(exCount,"exercise")}</span></div>
+                <button class="openlinkbtn" type="button">Open in Program Builder →</button>
+              `;
+              card.querySelector(".openlinkbtn").addEventListener("click", () => openProgramFromClient(p));
+              progList.appendChild(card);
+            });
+          }
+          body.appendChild(progList);
+      }, "cmnestedpill"));
 
-  const linkedCases = casesCache.filter(c => c.clientId === client.id);
-  const caseLabel = document.createElement("div");
-  caseLabel.className = "field-label";
-  caseLabel.textContent = "Rehab Cases";
-  wrap.appendChild(caseLabel);
-  const caseList = document.createElement("div");
-  caseList.className = "clientlinklist";
-  if(!linkedCases.length){
-    caseList.innerHTML = '<div class="emptyprogs">No rehab cases linked yet — link this client from a case&#39;s Linked client field in Rehab.</div>';
-  } else {
-    linkedCases.forEach(c => {
-      const areas = c.areaGroups || [];
-      const card = document.createElement("div");
-      card.className = "clientlinkcard";
-      card.innerHTML = `
-        <div><b>${esc(c.diagnosis ? (c.diagnosis.length > 60 ? c.diagnosis.slice(0,60) + "…" : c.diagnosis) : "Rehab case")}</b><span class="meta">${areas.length ? esc(areas.join(", ")) : "No area set"} · ${fmtCount((c.plan||[]).length,"exercise")}</span></div>
-        <button class="openlinkbtn" type="button">Open in Rehab →</button>
-      `;
-      card.querySelector(".openlinkbtn").addEventListener("click", () => openCaseFromClient(c));
-      caseList.appendChild(card);
-    });
-  }
-  wrap.appendChild(caseList);
+      body.appendChild(buildClientProfilePill(client, "rehabcases", "Rehab Cases", true, body => {
+          const linkedCases = casesCache.filter(c => c.clientId === client.id);
+          const caseLabel = document.createElement("div");
+          caseLabel.className = "field-label";
+          caseLabel.textContent = "Rehab Cases";
+          body.appendChild(caseLabel);
+          const caseList = document.createElement("div");
+          caseList.className = "clientlinklist";
+          if(!linkedCases.length){
+            caseList.innerHTML = '<div class="emptyprogs">No rehab cases linked yet — link this client from a case&#39;s Linked client field in Rehab.</div>';
+          } else {
+            linkedCases.forEach(c => {
+              const areas = c.areaGroups || [];
+              const card = document.createElement("div");
+              card.className = "clientlinkcard";
+              card.innerHTML = `
+                <div><b>${esc(c.diagnosis ? (c.diagnosis.length > 60 ? c.diagnosis.slice(0,60) + "…" : c.diagnosis) : "Rehab case")}</b><span class="meta">${areas.length ? esc(areas.join(", ")) : "No area set"} · ${fmtCount((c.plan||[]).length,"exercise")}</span></div>
+                <button class="openlinkbtn" type="button">Open in Rehab →</button>
+              `;
+              card.querySelector(".openlinkbtn").addEventListener("click", () => openCaseFromClient(c));
+              caseList.appendChild(card);
+            });
+          }
+          body.appendChild(caseList);
+      }, "cmnestedpill"));
 
-  const linkedNutrition = nutritionCache.filter(n => n.clientId === client.id);
-  const nutLabel = document.createElement("div");
-  nutLabel.className = "field-label";
-  nutLabel.textContent = "Nutrition Plans";
-  wrap.appendChild(nutLabel);
-  const nutList = document.createElement("div");
-  nutList.className = "clientlinklist";
-  if(!linkedNutrition.length){
-    nutList.innerHTML = '<div class="emptyprogs">No nutrition plans linked yet — link this client from a plan&#39;s Client picker in Nutrition.</div>';
-  } else {
-    linkedNutrition.forEach(n => {
-      const card = document.createElement("div");
-      card.className = "clientlinkcard";
-      card.innerHTML = `
-        <div><b>${esc(n.name||"Untitled Plan")}</b><span class="meta">${fmtCount((n.meals||[]).length,"meal")}</span></div>
-        <button class="openlinkbtn" type="button">Open in Nutrition →</button>
-      `;
-      card.querySelector(".openlinkbtn").addEventListener("click", () => openNutritionFromClient(n));
-      nutList.appendChild(card);
-    });
-  }
-  wrap.appendChild(nutList);
+      body.appendChild(buildClientProfilePill(client, "nutritionplans", "Nutrition Plans", true, body => {
+          const linkedNutrition = nutritionCache.filter(n => n.clientId === client.id);
+          const nutLabel = document.createElement("div");
+          nutLabel.className = "field-label";
+          nutLabel.textContent = "Nutrition Plans";
+          body.appendChild(nutLabel);
+          const nutList = document.createElement("div");
+          nutList.className = "clientlinklist";
+          if(!linkedNutrition.length){
+            nutList.innerHTML = '<div class="emptyprogs">No nutrition plans linked yet — link this client from a plan&#39;s Client picker in Nutrition.</div>';
+          } else {
+            linkedNutrition.forEach(n => {
+              const card = document.createElement("div");
+              card.className = "clientlinkcard";
+              card.innerHTML = `
+                <div><b>${esc(n.name||"Untitled Plan")}</b><span class="meta">${fmtCount((n.meals||[]).length,"meal")}</span></div>
+                <button class="openlinkbtn" type="button">Open in Nutrition →</button>
+              `;
+              card.querySelector(".openlinkbtn").addEventListener("click", () => openNutritionFromClient(n));
+              nutList.appendChild(card);
+            });
+          }
+          body.appendChild(nutList);
+      }, "cmnestedpill"));
+  });
+
+  wrap.appendChild(contactPill);
+  wrap.appendChild(accessPill);
+  const goalsNotesRow = document.createElement("div");
+  goalsNotesRow.className = "clientprofilerow";
+  goalsNotesRow.appendChild(goalsPill);
+  goalsNotesRow.appendChild(notesPill);
+  wrap.appendChild(goalsNotesRow);
+  wrap.appendChild(sessionLogPill);
+  wrap.appendChild(tasksPill);
+  wrap.appendChild(weeklyGoalsPill);
+  wrap.appendChild(agendaNotesPill);
+  wrap.appendChild(trainingPlanPill);
 
   host.appendChild(wrap);
 
@@ -6410,6 +6502,10 @@ function renderClientProfile(){
   });
   document.getElementById("clientEmailInput").addEventListener("input", e => {
     client.email = e.target.value.trim();
+    scheduleClientSave(client);
+  });
+  document.getElementById("clientBirthdayInput").addEventListener("input", e => {
+    client.birthday = e.target.value;
     scheduleClientSave(client);
   });
   document.getElementById("resendAccessEmailBtn").addEventListener("click", async () => {
