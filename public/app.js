@@ -1281,6 +1281,59 @@ function progressionOf(ex, weeks){
   return ex.progression;
 }
 
+// Per-set logging: "3x9" prescribes 3 sets, so a client gets 3 entry rows
+// for that week (reps + weight actually done in each), never fewer -- plus
+// "+ Add Set" for a set beyond what was prescribed. `wk.sets` is a free-text
+// field (coaches sometimes write ranges like "3-4"), so this reads its
+// leading number and falls back to 1 rather than 0 if it can't parse one.
+function prescribedSetCount(wk){
+  return Math.max(1, parseInt(wk && wk.sets, 10) || 1);
+}
+
+// Read-only view of a week's logged sets: the new actualSets array if it
+// exists, otherwise the old single actualReps/actualWeight fields (from
+// before per-set logging existed) folded into a one-entry array -- without
+// writing anything back. Used for display (history, the coach's grid) where
+// a week that isn't currently being edited should never get silently
+// mutated just because someone looked at it.
+function actualSetsOf(wk){
+  if(Array.isArray(wk && wk.actualSets)) return wk.actualSets;
+  if(wk && (wk.actualReps || wk.actualWeight)) return [{reps: wk.actualReps || "", weight: wk.actualWeight || ""}];
+  return [];
+}
+
+// Ensures wk.actualSets exists with at least the prescribed number of
+// entries -- this is the "about to render editable inputs for this week"
+// path, so (unlike actualSetsOf above) it's expected to migrate and persist
+// the legacy fields into the new shape rather than losing them.
+function ensureActualSets(wk){
+  let arr = actualSetsOf(wk);
+  const needed = prescribedSetCount(wk);
+  if(arr.length < needed){
+    // Reassign rather than push -- same read-only/frozen-array concern as
+    // ex.progression above.
+    const extra = [];
+    while(arr.length + extra.length < needed) extra.push({reps: "", weight: ""});
+    arr = arr.concat(extra);
+  }
+  wk.actualSets = arr;
+  return arr;
+}
+
+function hasLoggedAnySet(wk){
+  return actualSetsOf(wk).some(s => s && (s.reps || s.weight));
+}
+
+// A compact "Set 1: 9 @ 60kg, Set 2: 8 @ 60kg" readout of what was actually
+// logged for a week -- shared by the client's "Earlier weeks" history and
+// the coach's own week-by-week builder grid.
+function summarizeLoggedSets(wk){
+  return actualSetsOf(wk)
+    .map((s, idx) => (s && (s.reps || s.weight)) ? `Set ${idx + 1}: ${s.reps || "—"}${s.weight ? " @ " + s.weight : ""}` : null)
+    .filter(Boolean)
+    .join(", ");
+}
+
 // True if any exercise in the program already has manually-set (or previously
 // generated) sets/reps/load — used to gate Apply Progression behind a
 // confirmation so a hand-tuned week is never silently overwritten.
@@ -1310,16 +1363,21 @@ function updateFromActuals(){
   (currentProgram.days||[]).forEach(day => (day.exercises||[]).forEach(ex => {
     if(!Array.isArray(ex.progression) || !ex.progression.length) return;
 
-    // Find the last week with both a logged rep count and weight.
+    // Find the last week with at least one logged set.
     let w = -1;
     for(let i=0; i<ex.progression.length; i++){
-      if(ex.progression[i].actualReps && ex.progression[i].actualWeight) w = i;
+      if(hasLoggedAnySet(ex.progression[i])) w = i;
     }
     if(w === -1 || w >= weeks - 1) return;
 
     const wk = ex.progression[w];
-    const actualReps = parseInt(wk.actualReps, 10);
-    const actualWeight = parseFloat(wk.actualWeight);
+    // Progressive overload reads off the LAST logged set that week -- for a
+    // straight-sets prescription that's the final working set, which best
+    // reflects whether the prescribed weight is still challenging enough.
+    const loggedSets = actualSetsOf(wk).filter(s => s && (s.reps || s.weight));
+    const lastSet = loggedSets[loggedSets.length - 1] || {};
+    const actualReps = parseInt(lastSet.reps, 10);
+    const actualWeight = parseFloat(lastSet.weight);
     const prescribedReps = parseInt(wk.reps, 10);
     const hitTarget = !prescribedReps || (actualReps >= prescribedReps);
     const role = exerciseRole(ex);
@@ -1424,8 +1482,7 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
           <div class="rowlabel">Reps</div>
           <div class="rowlabel">Load</div>
           <div class="rowdivider"></div>
-          <div class="rowlabel actual">Done</div>
-          <div class="rowlabel actual">Wt used</div>
+          <div class="rowlabel actual">Logged</div>
         </div>
         ${prog.map((wk, i) => `
           <div class="weekcol">
@@ -1434,8 +1491,7 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
             <input type="text" data-wf="reps" data-wi="${i}" value="${esc(wk.reps||"")}" placeholder="Reps">
             <input type="text" data-wf="load" data-wi="${i}" value="${esc(wk.load||"")}" placeholder="Load">
             <div class="rowdivider"></div>
-            <input type="text" class="actualinput" data-wf="actualReps" data-wi="${i}" value="${esc(wk.actualReps||"")}" placeholder="Reps done">
-            <input type="text" class="actualinput" data-wf="actualWeight" data-wi="${i}" value="${esc(wk.actualWeight||"")}" placeholder="Wt used">
+            <div class="actualsummary" title="Logged per set by the client -- open Preview Client View to see or edit the full breakdown">${esc(summarizeLoggedSets(wk) || "—")}</div>
           </div>
         `).join("")}
       </div>
@@ -1447,7 +1503,7 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
       inp.addEventListener("input", () => {
         const i = parseInt(inp.dataset.wi, 10);
         prog[i][inp.dataset.wf] = inp.value;
-        if(i === 0 && inp.dataset.wf !== "actualReps" && inp.dataset.wf !== "actualWeight") ex[inp.dataset.wf] = inp.value;
+        if(i === 0) ex[inp.dataset.wf] = inp.value;
         onChange();
       });
     });
@@ -3371,11 +3427,26 @@ function scheduleClientProgramActualsSave(program){
   clientProgActualsSaveTimer = setTimeout(async () => {
     if(!program) return;
     const payload = {days: program.days, updatedAt: new Date().toISOString()};
+    const isClientViewer = clientSession && clientSession.id === program.clientId;
     if(programsCol && !String(program.id).startsWith("local-")){
+      // The COACH's own browser, with real db access -- used both when she
+      // edits a program directly and when she's previewing a client.
       try{
         await programsCol.doc(program.id).update(payload);
         cmSetSaveStatus("Saved");
       }catch(e){
+        cmSetSaveStatus(isClientViewer ? "Couldn't save — ask your coach to check your access" : "Couldn't save — try again in a moment");
+      }
+    } else if(isClientViewer && window.__clientPortal && clientSession.accessCode){
+      // A logged-in CLIENT, logging their own sets. No Supabase session (see
+      // tryClientLogin), so this goes through the access-code-checked RPC
+      // instead of the coach's db shim -- same pattern scheduleClientSave
+      // already uses for every other client-editable field.
+      try{
+        await window.__clientPortal.saveProgramActualsForCode(clientSession.accessCode, program.id, program.days);
+        cmSetSaveStatus("Saved");
+      }catch(e){
+        console.error("[scheduleClientProgramActualsSave/client]", e);
         cmSetSaveStatus("Couldn't save — ask your coach to check your access");
       }
     } else {
@@ -4069,7 +4140,7 @@ function getSelectedWeekIndex(program){
   (program.days || []).forEach(day => (day.exercises || []).forEach(ex => {
     if(Array.isArray(ex.progression)){
       ex.progression.forEach((wk, i) => {
-        if(wk && (wk.actualReps || wk.actualWeight)) lastLogged = Math.max(lastLogged, i);
+        if(hasLoggedAnySet(wk) || (wk && (wk.actualReps || wk.actualWeight))) lastLogged = Math.max(lastLogged, i);
       });
     }
   }));
@@ -4100,34 +4171,92 @@ function buildWeekSelector(program){
   return wrap;
 }
 
+// The per-set entry rows for one exercise in one week -- one row per
+// prescribed set (e.g. "3x9" prescribes 3 rows), each with its own reps and
+// weight fields, plus a button to log a set beyond what was prescribed.
+function buildClientSetRows(wk, program){
+  const wrap = document.createElement("div");
+  wrap.className = "cmsetrows";
+  const actualSets = ensureActualSets(wk);
+  actualSets.forEach((setEntry, si) => {
+    const setRow = document.createElement("div");
+    setRow.className = "cmsetrow";
+    setRow.innerHTML = `
+      <span class="cmsetnum">Set ${si + 1}</span>
+      <input type="text" inputmode="decimal" data-sf="reps" value="${esc(setEntry.reps || "")}" placeholder="Reps">
+      <input type="text" inputmode="decimal" data-sf="weight" value="${esc(setEntry.weight || "")}" placeholder="Weight">
+    `;
+    setRow.querySelectorAll("[data-sf]").forEach(inp => {
+      inp.addEventListener("input", () => {
+        setEntry[inp.dataset.sf] = inp.value;
+        scheduleClientProgramActualsSave(program);
+      });
+    });
+    wrap.appendChild(setRow);
+  });
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "cmaddsetbtn";
+  addBtn.textContent = "+ Add Set";
+  addBtn.addEventListener("click", () => {
+    wk.actualSets = ensureActualSets(wk).concat([{reps: "", weight: ""}]);
+    scheduleClientProgramActualsSave(program);
+    renderClientModeView();
+  });
+  wrap.appendChild(addBtn);
+  return wrap;
+}
+
+// A small "Watch Demo" link, looked up from the live movement library by
+// exercise name -- a program's saved exercises don't carry their own
+// demoUrl, so this looks it up fresh at render time the same way
+// exerciseRole() already does via findLibraryRecord().
+function appendWatchDemoLink(container, ex){
+  const rec = findLibraryRecord(ex);
+  if(!rec || !rec.demoUrl) return;
+  const link = document.createElement("a");
+  link.className = "demolink cmdemolink";
+  link.href = rec.demoUrl;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.title = "Search YouTube for a demo of this exercise";
+  link.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Watch Demo';
+  container.appendChild(link);
+}
+
 function buildClientExRow(ex, program, weeks, weekIndex){
   const row = document.createElement("div");
   row.className = "cmexrow";
-  const nameHtml = `<div class="cmexname">${esc(ex.exercise)}</div>`;
-  if(weeks <= 1){
-    row.innerHTML = nameHtml + `<div>${esc(ex.sets||"—")} sets × ${esc(ex.reps||"—")} reps${ex.load ? " @ " + esc(ex.load) : ""}</div>` + (ex.notes ? `<div class="cmexnotes">${esc(ex.notes)}</div>` : "");
-    return row;
-  }
+
+  const head = document.createElement("div");
+  head.className = "cmexhead";
+  const nameEl = document.createElement("div");
+  nameEl.className = "cmexname";
+  nameEl.textContent = ex.exercise;
+  head.appendChild(nameEl);
+  appendWatchDemoLink(head, ex);
+  row.appendChild(head);
+
+  // Per-set logging works the same whether this program has one week or
+  // many -- progressionOf(ex, 1) just treats a single-week program as a
+  // one-entry progression, so there's only ever one code path to maintain.
   const prog = progressionOf(ex, weeks);
   const i = Math.max(0, Math.min(weeks - 1, weekIndex || 0));
-  const wk = prog[i] || {};
-
-  row.innerHTML = nameHtml;
+  const wk = prog[i] || (prog[i] = {});
 
   const nowBox = document.createElement("div");
   nowBox.className = "cmweeknow";
-  nowBox.innerHTML = `
-    <div class="cmwklabel">Week ${i + 1} of ${weeks}</div>
-    <div class="cmrx">${esc(wk.sets || "—")}×${esc(wk.reps || "—")}${wk.load ? " @ " + esc(wk.load) : ""}</div>
-    <input type="text" data-wf="actualReps" value="${esc(wk.actualReps || "")}" placeholder="Reps done">
-    <input type="text" data-wf="actualWeight" value="${esc(wk.actualWeight || "")}" placeholder="Wt used">
-  `;
-  nowBox.querySelectorAll("[data-wf]").forEach(inp => {
-    inp.addEventListener("input", () => {
-      prog[i][inp.dataset.wf] = inp.value;
-      scheduleClientProgramActualsSave(program);
-    });
-  });
+  if(weeks > 1){
+    const wkLabel = document.createElement("div");
+    wkLabel.className = "cmwklabel";
+    wkLabel.textContent = `Week ${i + 1} of ${weeks}`;
+    nowBox.appendChild(wkLabel);
+  }
+  const rxLabel = document.createElement("div");
+  rxLabel.className = "cmrx";
+  rxLabel.textContent = `Target: ${wk.sets || "—"}×${wk.reps || "—"}${wk.load ? " @ " + wk.load : ""}`;
+  nowBox.appendChild(rxLabel);
+  nowBox.appendChild(buildClientSetRows(wk, program));
   row.appendChild(nowBox);
 
   if(ex.notes){
@@ -4139,33 +4268,33 @@ function buildClientExRow(ex, program, weeks, weekIndex){
 
   // Reference to earlier weeks -- read-only (this is "what did I do
   // before", not another place to edit it), and only shown when there's
-  // actually something worth looking back at.
-  const earlierWeeks = prog
-    .map((w, idx2) => Object.assign({}, w, {weekNum: idx2 + 1}))
-    .slice(0, i)
-    .filter(w => w.sets || w.reps || w.load || w.actualReps || w.actualWeight);
-  if(earlierWeeks.length){
-    if(!ex.id) ex.id = rid(); // safety net for any older exercise saved before ids were added
-    const hist = document.createElement("details");
-    hist.className = "cmweekhistory";
-    hist.open = cmWeekHistoryOpenIds.has(ex.id);
-    hist.addEventListener("toggle", () => {
-      if(hist.open) cmWeekHistoryOpenIds.add(ex.id); else cmWeekHistoryOpenIds.delete(ex.id);
-    });
-    const histSummary = document.createElement("summary");
-    histSummary.textContent = "Earlier weeks";
-    hist.appendChild(histSummary);
-    earlierWeeks.slice().reverse().forEach(w => {
-      const hr = document.createElement("div");
-      hr.className = "cmweekhistoryrow";
-      const rx = `${w.sets || "—"}×${w.reps || "—"}${w.load ? " @ " + w.load : ""}`;
-      const logged = (w.actualReps || w.actualWeight)
-        ? ` — logged ${w.actualReps || "—"} reps${w.actualWeight ? " @ " + w.actualWeight : ""}`
-        : " — not logged";
-      hr.textContent = `Wk ${w.weekNum}: ${rx}${logged}`;
-      hist.appendChild(hr);
-    });
-    row.appendChild(hist);
+  // actually an earlier week with something worth looking back at.
+  if(weeks > 1){
+    const earlierWeeks = prog
+      .map((w, idx2) => Object.assign({}, w, {weekNum: idx2 + 1}))
+      .slice(0, i)
+      .filter(w => w.sets || w.reps || w.load || hasLoggedAnySet(w));
+    if(earlierWeeks.length){
+      if(!ex.id) ex.id = rid(); // safety net for any older exercise saved before ids were added
+      const hist = document.createElement("details");
+      hist.className = "cmweekhistory";
+      hist.open = cmWeekHistoryOpenIds.has(ex.id);
+      hist.addEventListener("toggle", () => {
+        if(hist.open) cmWeekHistoryOpenIds.add(ex.id); else cmWeekHistoryOpenIds.delete(ex.id);
+      });
+      const histSummary = document.createElement("summary");
+      histSummary.textContent = "Earlier weeks";
+      hist.appendChild(histSummary);
+      earlierWeeks.slice().reverse().forEach(w => {
+        const hr = document.createElement("div");
+        hr.className = "cmweekhistoryrow";
+        const rx = `${w.sets || "—"}×${w.reps || "—"}${w.load ? " @ " + w.load : ""}`;
+        const logged = summarizeLoggedSets(w);
+        hr.textContent = `Wk ${w.weekNum}: ${rx}` + (logged ? ` — ${logged}` : " — not logged");
+        hist.appendChild(hr);
+      });
+      row.appendChild(hist);
+    }
   }
 
   return row;
@@ -4357,8 +4486,9 @@ function renderClientModeView(){
   // The Road Map -- everything day-to-day lives nested inside here:
   // Today's Agenda (coach's notes for today, the shared tick list, and
   // today's scheduled training pinned right there too), Training Plan
-  // (every program day as its own expandable pill), and Rehab if the
-  // coach has set up a case.
+  // (every program day as its own expandable pill), Rehab if the coach has
+  // set up a case, and Nutrition -- all as their own small pill within this
+  // one, same as Training Plan and Today's Agenda.
   host.appendChild(buildCmPill("The Road Map", () => cmRoadMapOpen, v => { cmRoadMapOpen = v; }, body => {
 
     body.appendChild(buildCmPill("Today's Agenda", () => cmTodaysAgendaOpen, v => { cmTodaysAgendaOpen = v; }, agendaBody => {
@@ -4384,19 +4514,19 @@ function renderClientModeView(){
         myCases.forEach(c => rehabBody.appendChild(buildClientCaseCard(c)));
       }, "cmnestedpill"));
     }
-  }));
 
-  // Nutrition -- the client's own preferences, plus whatever plan the
-  // coach has put together for them.
-  host.appendChild(buildCmPill("Nutrition", () => cmNutritionOpen, v => { cmNutritionOpen = v; }, body => {
-    body.appendChild(buildClientNutritionPrefs(client));
-    if(myNutrition.length){
-      const planLabel = document.createElement("div");
-      planLabel.className = "field-label";
-      planLabel.textContent = "My Nutrition Plan";
-      body.appendChild(planLabel);
-      myNutrition.forEach(n => body.appendChild(buildClientNutritionCard(n)));
-    }
+    // Nutrition -- the client's own preferences, plus whatever plan the
+    // coach has put together for them.
+    body.appendChild(buildCmPill("Nutrition", () => cmNutritionOpen, v => { cmNutritionOpen = v; }, nutritionBody => {
+      nutritionBody.appendChild(buildClientNutritionPrefs(client));
+      if(myNutrition.length){
+        const planLabel = document.createElement("div");
+        planLabel.className = "field-label";
+        planLabel.textContent = "My Nutrition Plan";
+        nutritionBody.appendChild(planLabel);
+        myNutrition.forEach(n => nutritionBody.appendChild(buildClientNutritionCard(n)));
+      }
+    }, "cmnestedpill"));
   }));
 
   // Messages -- a direct line to the coach, right in the app. No unread
