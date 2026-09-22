@@ -1,4 +1,7 @@
 {
+  "crons": [
+    { "path": "/api/send-birthday-messages", "schedule": "0 8 * * *" }
+  ],
   "headers": [
     {
       "source": "/app.js",
