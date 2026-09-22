@@ -8,8 +8,13 @@ let customCol = null;
 // program. Matched by exercise+sub so the same movement in different
 // filtered views is recognized as already-queued rather than duplicated.
 let programQueue = [];
+// Same idea, kept as a totally separate list, for queuing exercises into a
+// new REHAB case instead -- an exercise can be queued for one, the other,
+// or both at once, since they end up in different places.
+let rehabQueue = [];
 function queueKey(r){ return (r.exercise||"") + "|||" + (r.sub||""); }
 function isQueued(r){ return programQueue.some(q => queueKey(q) === queueKey(r)); }
+function isRehabQueued(r){ return rehabQueue.some(q => queueKey(q) === queueKey(r)); }
 let clientsCol = null;
 let clientsCache = [];
 let clientSaveTimers = {}; // client id -> pending debounce timer handle (per-client, so editing client A then quickly clicking to client B never cancels A's pending save)
@@ -246,6 +251,7 @@ function render(){
   results.forEach(r => {
     const meta = REGION_META[r.region] || {var:"--accent"};
     const queued = isQueued(r);
+    const rehabQueued = isRehabQueued(r);
     const card = document.createElement("div");
     card.className = "card";
     card.style.setProperty("--card-accent", `var(${meta.var})`);
@@ -265,13 +271,20 @@ function render(){
       <div class="detail"><b>Joint action</b>${esc(r.joint)}</div>
       <div class="detail"><b>Primary mover(s)</b>${esc(r.primary)}</div>
       <div class="detail"><b>Secondary mover(s)</b>${esc(r.secondary)}</div>
-      <button type="button" class="queuebtn${queued ? " queued" : ""}">${queued ? "✓ Queued for Program" : "+ Queue to Program"}</button>
+      <button type="button" class="queuebtn progqueuebtn${queued ? " queued" : ""}">${queued ? "✓ Queued for Program" : "+ Queue to Program"}</button>
+      <button type="button" class="queuebtn rehabqueuebtn${rehabQueued ? " queued" : ""}">${rehabQueued ? "✓ Queued for Rehab" : "+ Queue to Rehab"}</button>
     `;
-    card.querySelector(".queuebtn").addEventListener("click", () => {
+    card.querySelector(".progqueuebtn").addEventListener("click", () => {
       if(isQueued(r)) programQueue = programQueue.filter(q => queueKey(q) !== queueKey(r));
       else programQueue = programQueue.concat([r]);
       render();
       renderProgramQueueBar();
+    });
+    card.querySelector(".rehabqueuebtn").addEventListener("click", () => {
+      if(isRehabQueued(r)) rehabQueue = rehabQueue.filter(q => queueKey(q) !== queueKey(r));
+      else rehabQueue = rehabQueue.concat([r]);
+      render();
+      renderRehabQueueBar();
     });
     grid.appendChild(card);
   });
@@ -358,6 +371,83 @@ async function createProgramFromQueue(){
     renderProgramList(); renderEditor();
   }catch(e){
     flashNote("Couldn't create a new program right now (" + e.code + "). Try again in a moment.");
+  }
+}
+
+// Same strip as the Program Queue above, for exercises headed into a new
+// REHAB case instead of a program. Kept as its own bar/list (rehabQueue,
+// not programQueue) so queuing something for one never touches the other.
+function renderRehabQueueBar(){
+  const bar = document.getElementById("rehabQueueBar");
+  if(!bar) return;
+  if(!rehabQueue.length){
+    bar.innerHTML = "";
+    bar.hidden = true;
+    return;
+  }
+  bar.hidden = false;
+  bar.innerHTML = `
+    <div class="queuebarhead">
+      <span class="queuebartitle">Rehab Queue (${rehabQueue.length})</span>
+      <button type="button" class="generatebtn rehabqueuecreatebtn">Create Case from Queue</button>
+      <button type="button" class="clearbtn rehabqueueclearbtn">Clear Queue</button>
+    </div>
+    <div class="queuebarlist">
+      ${rehabQueue.map(r => `<span class="queuechip">${esc(r.exercise)} <button type="button" class="queuechipremove" data-key="${esc(queueKey(r))}" title="Remove from queue">✕</button></span>`).join("")}
+    </div>
+  `;
+  bar.querySelectorAll(".queuechipremove").forEach(btn => {
+    btn.addEventListener("click", () => {
+      rehabQueue = rehabQueue.filter(q => queueKey(q) !== btn.dataset.key);
+      render();
+      renderRehabQueueBar();
+    });
+  });
+  bar.querySelector(".rehabqueuecreatebtn").addEventListener("click", createCaseFromQueue);
+  bar.querySelector(".rehabqueueclearbtn").addEventListener("click", () => {
+    rehabQueue = [];
+    render();
+    renderRehabQueueBar();
+  });
+}
+
+// Turns the rehab queue into a brand-new case's plan (sets/reps/load start
+// blank, exactly like adding an exercise to a case by hand), then opens it
+// in the Rehab tab ready for a diagnosis, area, and client to be set.
+// Mirrors createProgramFromQueue above, including using ensureRehabInited()
+// (rehab's equivalent of ensureBuilderInited) so a case created here can't
+// get raced and wiped out by rehabCases' own first snapshot landing after
+// this already created and selected one.
+async function createCaseFromQueue(){
+  if(!rehabQueue.length) return;
+  showTab("rehab");
+  await ensureRehabInited();
+  const queued = rehabQueue;
+  rehabQueue = [];
+  renderRehabQueueBar();
+  render();
+  const now = new Date().toISOString();
+  const plan = queued.map(r => ({
+    id: rid(), exercise: r.exercise, group: r.group, sub: r.sub, plane: r.plane,
+    pattern: r.pattern, joint: r.joint, primary: r.primary, secondary: r.secondary,
+    sets: "", reps: "", load: "", notes: "",
+  }));
+  const data = {clientName: "New Case (from Queue)", clientId: null, diagnosis: "", areaGroups: [], areaSubs: [], plan, createdAt: now, updatedAt: now};
+  if(!rehabCol){
+    const id = "local-" + rid();
+    const rec = Object.assign({id}, data);
+    casesCache.unshift(rec);
+    currentCaseId = id; currentCase = JSON.parse(JSON.stringify(rec));
+    renderCaseList(); renderRehabEditor();
+    return;
+  }
+  try{
+    const ref = await rehabCol.add(data);
+    currentCaseId = ref.id;
+    currentCase = Object.assign({id: ref.id}, data);
+    renderCaseList(); renderRehabEditor();
+  }catch(e){
+    flashNote("Couldn't create a new case right now (" + e.code + "). Try again in a moment.", "dbnoteRehab");
   }
 }
 
@@ -587,6 +677,8 @@ let builderInited = false;
 let builderInitPromise = null;
 let builderReadyResolve = null;
 let rehabInited = false;
+let rehabInitPromise = null;
+let rehabReadyResolve = null;
 let clientsTabInited = false;
 let nutritionInited = false;
 let messagesInited = false;
@@ -616,6 +708,21 @@ function ensureBuilderInited(){
   return builderInitPromise || Promise.resolve();
 }
 
+// Same idea as ensureBuilderInited above, for Rehab -- needed by the
+// Exercise Library's "Create Case from Queue" for exactly the same reason:
+// without it, a case created before rehabCases' first snapshot lands could
+// get wiped back out once that snapshot arrives.
+function ensureRehabInited(){
+  if(!rehabInited){
+    rehabInited = true;
+    rehabInitPromise = new Promise(resolve => {
+      rehabReadyResolve = resolve;
+      initRehab();
+    });
+  }
+  return rehabInitPromise || Promise.resolve();
+}
+
 function showTab(name){
   Object.keys(tabBtns).forEach(k => {
     tabBtns[k].classList.toggle("active", k === name);
@@ -625,9 +732,8 @@ function showTab(name){
   if(name === "builder"){
     ensureBuilderInited();
   }
-  if(name === "rehab" && !rehabInited){
-    rehabInited = true;
-    initRehab();
+  if(name === "rehab"){
+    ensureRehabInited();
   }
   if(name === "nutrition" && !nutritionInited){
     nutritionInited = true;
@@ -2958,10 +3064,17 @@ async function initRehab(){
     flashNote("Saving isn't wired up in this preview, so cases you build here won't be kept — open the published page itself to save for real.", "dbnoteRehab");
     renderCaseList();
     renderRehabEditor();
+    if(rehabReadyResolve){ rehabReadyResolve(); rehabReadyResolve = null; }
     return;
   }
 
   rehabCol = db.collection("rehabCases");
+  let firstSnapshotSeen = false;
+  function markRehabReady(){
+    if(firstSnapshotSeen) return;
+    firstSnapshotSeen = true;
+    if(rehabReadyResolve){ rehabReadyResolve(); rehabReadyResolve = null; }
+  }
   rehabCol.orderBy("updatedAt", "desc").limit(200).onSnapshot(snap => {
     casesCache = snap.docs.map(d => Object.assign({id: d.id}, d.data()));
     renderCaseList();
@@ -2970,8 +3083,10 @@ async function initRehab(){
     }
     safeRenderClientProfile();
     safeRenderClientModeView();
+    markRehabReady();
   }, err => {
     flashNote("Couldn't load your rehab cases (" + err.code + "). You can still build one, but it may not save.", "dbnoteRehab");
+    markRehabReady();
   });
 }
 
@@ -3818,7 +3933,7 @@ function initClientsTab(){
   // Pull in program/rehab/nutrition data (normally lazy, per-tab) so the
   // consolidated view is accurate even if the coach opens Clients first.
   ensureBuilderInited();
-  if(!rehabInited){ rehabInited = true; initRehab(); }
+  ensureRehabInited();
   if(!nutritionInited){ nutritionInited = true; initNutrition(); }
   if(!messagesInited){ messagesInited = true; initMessages(); }
   renderClientList();
