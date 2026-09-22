@@ -70,6 +70,10 @@ let cmGoalsHistoryOpenIds = new Set();
 // Which clients currently have their "Session Notes (from Client)" history
 // expanded on the coach's own Client Profile page, keyed by client id.
 let cmSessionLogHistoryOpenIds = new Set();
+// Which clients currently have the "BODY METRICS" toggle expanded -- shown
+// on both the client's own Body Metrics section and the coach's Contact &
+// Personal Info pill (same shared widget either side opens/edits).
+let cmBodyMetricsPillOpenIds = new Set();
 
 // Task-adding is a two-step "pick, then Save" flow (see renderClientProfile):
 // nothing lands on the client's real task list until the coach hits the
@@ -658,6 +662,7 @@ const tabBtns = {
   clients: document.getElementById("tabbtn-clients"),
   messages: document.getElementById("tabbtn-messages"),
   enquiries: document.getElementById("tabbtn-enquiries"),
+  notifications: document.getElementById("tabbtn-notifications"),
 };
 const tabPanels = {
   library: document.getElementById("tabpanel-library"),
@@ -667,6 +672,7 @@ const tabPanels = {
   clients: document.getElementById("tabpanel-clients"),
   messages: document.getElementById("tabpanel-messages"),
   enquiries: document.getElementById("tabpanel-enquiries"),
+  notifications: document.getElementById("tabpanel-notifications"),
 };
 const pageSub = document.getElementById("pagesub");
 const SUBS = {
@@ -677,6 +683,7 @@ const SUBS = {
   clients: "One place per client — their info and goals alongside every program, rehab case and nutrition plan built for them.",
   messages: "Chat with your clients right from the app — no phone number needed on either side.",
   enquiries: "Everyone who's filled out the Enquire form on your sign-in page, newest first — follow up, or turn one straight into a client.",
+  notifications: "Notes your clients left after saving a finished training session, newest first — no need to open each profile to catch them.",
 };
 let builderInited = false;
 let builderInitPromise = null;
@@ -752,10 +759,29 @@ function showTab(name){
     messagesInited = true;
     initMessages();
   }
+  if(name === "notifications"){
+    // No dedicated subscription needed -- session-log notes already live
+    // inside programsCache (loaded eagerly, see ensureBuilderInited below),
+    // so this just re-renders from whatever's already there.
+    renderNotificationsList();
+  }
   if(name === "enquiries" && !enquiriesInited){
     enquiriesInited = true;
     initEnquiries();
   }
+}
+
+// Jumps to THE SQUAD tab with a specific client's profile already selected
+// -- used by the clickable client name on an open Messages thread. Calling
+// renderClientList/renderClientProfile directly (rather than relying on
+// showTab's own initClientsTab lazy-init) covers the common case where the
+// coach already has the Squad tab initialized from earlier in this visit,
+// so showTab alone wouldn't re-render it for the newly selected client.
+function goToClientProfile(clientId){
+  currentClientId = clientId;
+  showTab("clients");
+  renderClientList();
+  renderClientProfile();
 }
 tabBtns.library.addEventListener("click", () => showTab("library"));
 tabBtns.builder.addEventListener("click", () => showTab("builder"));
@@ -764,6 +790,7 @@ tabBtns.nutrition.addEventListener("click", () => showTab("nutrition"));
 tabBtns.clients.addEventListener("click", () => showTab("clients"));
 tabBtns.messages.addEventListener("click", () => showTab("messages"));
 tabBtns.enquiries.addEventListener("click", () => showTab("enquiries"));
+tabBtns.notifications.addEventListener("click", () => showTab("notifications"));
 
 let dbPromise = null;
 function getDb(){
@@ -1171,6 +1198,7 @@ async function initBuilder(){
     }
     safeRenderClientProfile();
     safeRenderClientModeView();
+    renderNotificationsList();
     markBuilderReady();
   }, err => {
     flashNote("Couldn't load your saved programs (" + err.code + "). You can still build one, but it may not save.");
@@ -2640,6 +2668,15 @@ function scheduleClientSave(client){
       // unsaved-in-truth change reverted -- "shows logged, then disappears."
       weeklyGoals: client.weeklyGoals || [], agendaNotes: client.agendaNotes || {},
       trainingSchedule: client.trainingSchedule || {}, weightLog: client.weightLog || [],
+      // Body Metrics' measurements log (waist/chest/hips/thigh/arm, dated,
+      // canonical cm) and its own cm/in display toggle -- same pattern as
+      // weightLog/weightUnit just above.
+      measurementLog: client.measurementLog || [], measurementUnit: client.measurementUnit || "cm",
+      // First/last name, collected on the Squad tab so the client's own
+      // "Welcome" header can greet them by first name only (see
+      // firstNameOf) -- client.name stays the combined full name, kept in
+      // sync automatically, since dozens of other places still display it.
+      firstName: client.firstName || "", lastName: client.lastName || "",
       // Whether the coach has tucked this client's message thread into the
       // Archived section -- coach-only bookkeeping, never read or shown on
       // the client's own side.
@@ -3063,55 +3100,137 @@ function fmtShortDate(dateStr){
   return d.toLocaleDateString(undefined, {month: "short", day: "numeric"});
 }
 
-// A client's own weigh-in history: logging a new entry is a deliberate "+
-// Log Weigh-In" action (like Lifting Stats' "+ Add"), not tied to every
-// keystroke in the plain Body Weight field above it -- that field stays the
-// quick "current value" used for BMR/nutrition calc, and logging here also
-// syncs it so the two never drift apart. Weight is stored canonically in kg
-// (client.weightLog[].weightKg) and only converted for display, so toggling
-// the kg/lb unit (shared with Lifting Stats' own toggle) never needs to
-// touch stored history -- same pattern already used for lift stats.
-function buildWeightTrackerBox(client, rerenderOverride){
+// A client added before the first/last name split existed has only
+// client.name (a single combined string) -- this gives the Squad tab's two
+// name inputs a sane starting point by splitting it on the first space,
+// rather than showing blank First/Last fields for someone who already has
+// a name on file. Purely a display fallback for pre-filling the inputs;
+// once the coach edits either field, client.firstName/lastName take over
+// for good (see syncClientFullName in renderClientProfile).
+function splitClientName(client){
+  const full = (client.name || "").trim();
+  if(!full) return {first: "", last: ""};
+  const parts = full.split(/\s+/);
+  return {first: parts[0], last: parts.slice(1).join(" ")};
+}
+
+// First name only, for greeting a client on their own view ("Welcome,
+// ___"). Prefers the explicit client.firstName; falls back to splitting
+// client.name for a client saved before that field existed.
+function firstNameOf(client){
+  if(client.firstName) return client.firstName;
+  return splitClientName(client).first;
+}
+
+function cmToUnit(cm, unit){ return unit === "in" ? cm / 2.54 : cm; }
+function unitToCm(val, unit){ return unit === "in" ? val * 2.54 : val; }
+
+// The 5 common check-in measurements -- one dated entry can fill in any
+// subset of these at once (a client rarely measures everything every time),
+// stored canonically in cm on client.measurementLog[].
+const BODY_MEASUREMENTS = [
+  {key: "waist", label: "Waist"},
+  {key: "chest", label: "Chest"},
+  {key: "hips", label: "Hips"},
+  {key: "thigh", label: "Thigh"},
+  {key: "arm", label: "Arm"},
+];
+
+// A minimal dependency-free line chart (no charting library -- this file
+// ships to the browser completely unbundled, see the load-order note in
+// index.html) -- just enough to show a trend at a glance: the line itself,
+// a dashed average reference, and the most recent point highlighted.
+// `points` must be pre-sorted ascending by date and have at least 2 entries;
+// callers check that and show a "log one more" hint instead when they don't.
+function buildLineChartSvg(points){
+  const w = 300, h = 84, padX = 6, padY = 10;
+  const vals = points.map(p => p.value);
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const span = (max - min) || 1;
+  const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+  const x = i => padX + (i / (points.length - 1)) * (w - padX * 2);
+  const y = v => h - padY - ((v - min) / span) * (h - padY * 2);
+  const pathD = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join(" ");
+  const avgY = y(avg).toFixed(1);
+  const lastX = x(points.length - 1).toFixed(1);
+  const lastY = y(points[points.length - 1].value).toFixed(1);
+  return `
+    <svg viewBox="0 0 ${w} ${h}" class="cmlinechart" preserveAspectRatio="none">
+      <line x1="${padX}" y1="${avgY}" x2="${w - padX}" y2="${avgY}" class="cmlinechart-avg"/>
+      <path d="${pathD}" class="cmlinechart-line"/>
+      <circle cx="${lastX}" cy="${lastY}" r="3.5" class="cmlinechart-dot"/>
+    </svg>
+  `;
+}
+
+// The client's own body-metrics tracker: weigh-ins, body measurements, and
+// (eventually) progress photos, each dated -- defaults to today but can be
+// backdated via the date picker, so catching up on a missed entry doesn't
+// mean fudging today's. Lives as its own "BODY METRICS" toggle inside the
+// Body Metrics section on both the client's own view and the coach's
+// Contact & Personal Info pill -- same shared widget, same underlying
+// client.weightLog/measurementLog, whichever side opens or edits it.
+// Weight is stored canonically in kg (client.weightLog[].weightKg) and
+// measurements canonically in cm (client.measurementLog[].<key>), only
+// converted for display, so toggling either unit never touches stored
+// history -- same pattern already used for Lifting Stats.
+function buildBodyMetricsPill(client, rerenderOverride){
   const rerenderHost = rerenderOverride || renderClientProfile;
   client.weightLog = client.weightLog || [];
-  const unit = client.weightUnit || "kg";
+  client.measurementLog = client.measurementLog || [];
+  const wUnit = client.weightUnit || "kg";
+  const mUnit = client.measurementUnit || "cm";
   const saveTarget = () => scheduleClientSave(client);
+  const today = todayKey();
 
-  const box = document.createElement("div");
-  box.className = "statsbox";
+  const details = document.createElement("details");
+  details.className = "cmpill cmnestedpill";
+  details.open = cmBodyMetricsPillOpenIds.has(client.id);
+  details.addEventListener("toggle", () => {
+    if(details.open) cmBodyMetricsPillOpenIds.add(client.id); else cmBodyMetricsPillOpenIds.delete(client.id);
+  });
+  const summary = document.createElement("summary");
+  summary.textContent = "BODY METRICS";
+  details.appendChild(summary);
 
-  const sorted = client.weightLog.slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  const displayVals = sorted.map(e => round1(kgToUnit(e.weightKg, unit)));
-  const avg = displayVals.length ? round1(displayVals.reduce((a, b) => a + b, 0) / displayVals.length) : null;
-  const change = displayVals.length > 1 ? round1(displayVals[displayVals.length - 1] - displayVals[0]) : null;
+  const body = document.createElement("div");
+  body.className = "cmpillbody";
+  details.appendChild(body);
 
-  box.innerHTML = `
-    <div class="statsbox-head">
-      <h3>Body Weight Tracker</h3>
-    </div>
-    <div class="statshint">Log a weigh-in any time — the trend and average build up here as entries come in.</div>
-    ${sorted.length ? `
+  // ---------------------------- Weight ----------------------------------
+  const wSorted = client.weightLog.slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const wVals = wSorted.map(e => round1(kgToUnit(e.weightKg, wUnit)));
+  const wAvg = wVals.length ? round1(wVals.reduce((a, b) => a + b, 0) / wVals.length) : null;
+  const wChange = wVals.length > 1 ? round1(wVals[wVals.length - 1] - wVals[0]) : null;
+
+  const weightBox = document.createElement("div");
+  weightBox.className = "statsbox";
+  weightBox.innerHTML = `
+    <div class="statsbox-head"><h3>Weight</h3></div>
+    <div class="statshint">Log a weigh-in any time — pick today or backdate it if you're catching up.</div>
+    ${wSorted.length ? `
       <div class="targetrow" style="margin:8px 0 12px;">
-        <div class="targetstat"><b>${esc(displayVals[displayVals.length - 1])}${esc(unit)}</b><span>Latest — ${esc(fmtShortDate(sorted[sorted.length - 1].date))}</span></div>
-        <div class="targetstat"><b>${esc(avg)}${esc(unit)}</b><span>Average (${sorted.length} log${sorted.length === 1 ? "" : "s"})</span></div>
-        ${change !== null ? `<div class="targetstat"><b>${change > 0 ? "+" : ""}${esc(change)}${esc(unit)}</b><span>Change since first log</span></div>` : ""}
+        <div class="targetstat"><b>${esc(wVals[wVals.length - 1])}${esc(wUnit)}</b><span>Latest — ${esc(fmtShortDate(wSorted[wSorted.length - 1].date))}</span></div>
+        <div class="targetstat"><b>${esc(wAvg)}${esc(wUnit)}</b><span>Average (${wSorted.length} log${wSorted.length === 1 ? "" : "s"})</span></div>
+        ${wChange !== null ? `<div class="targetstat"><b>${wChange > 0 ? "+" : ""}${esc(wChange)}${esc(wUnit)}</b><span>Change since first log</span></div>` : ""}
       </div>
+      ${wVals.length > 1 ? buildLineChartSvg(wSorted.map((e, i) => ({date: e.date, value: wVals[i]}))) : '<div class="cmempty" style="padding:4px 0 10px;">Log one more weigh-in to see a trend line.</div>'}
     ` : '<div class="emptyprogs">No weigh-ins logged yet — add the first one below.</div>'}
     <div id="weightLogListEl"></div>
     <div class="addstat-row" style="margin-top:8px;">
-      <div class="addstat-field narrow"><input type="number" id="weightLogInput" placeholder="${esc(unit)}" min="0" step="0.1"></div>
+      <div class="addstat-field narrow"><input type="number" id="weightLogInput" placeholder="${esc(wUnit)}" min="0" step="0.1"></div>
+      <div class="addstat-field narrow"><input type="date" id="weightLogDate" max="${esc(today)}" value="${esc(today)}"></div>
       <button class="addstatbtn" id="addWeightLogBtn" type="button" disabled>+ Log Weigh-In</button>
     </div>
   `;
-
-  const listEl = box.querySelector("#weightLogListEl");
-  if(sorted.length){
-    sorted.slice().reverse().forEach(e => {
+  const weightListEl = weightBox.querySelector("#weightLogListEl");
+  if(wSorted.length){
+    wSorted.slice().reverse().forEach(e => {
       const row = document.createElement("div");
       row.className = "statrow";
-      const val = round1(kgToUnit(e.weightKg, unit));
+      const val = round1(kgToUnit(e.weightKg, wUnit));
       row.innerHTML = `
-        <div><b>${esc(val)}${esc(unit)}</b><span class="statmeta">${esc(fmtShortDate(e.date))}</span></div>
+        <div><b>${esc(val)}${esc(wUnit)}</b><span class="statmeta">${esc(fmtShortDate(e.date))}</span></div>
         <button class="statremove" title="Remove" type="button">✕</button>
       `;
       row.querySelector(".statremove").addEventListener("click", () => {
@@ -3119,30 +3238,115 @@ function buildWeightTrackerBox(client, rerenderOverride){
         saveTarget();
         rerenderHost();
       });
-      listEl.appendChild(row);
+      weightListEl.appendChild(row);
     });
   }
-
-  const input = box.querySelector("#weightLogInput");
-  const addBtn = box.querySelector("#addWeightLogBtn");
-  input.addEventListener("input", () => { addBtn.disabled = !input.value; });
-  const commitLog = () => {
-    const val = parseFloat(input.value);
+  const wInput = weightBox.querySelector("#weightLogInput");
+  const wDateInput = weightBox.querySelector("#weightLogDate");
+  const wAddBtn = weightBox.querySelector("#addWeightLogBtn");
+  wInput.addEventListener("input", () => { wAddBtn.disabled = !wInput.value; });
+  const commitWeightLog = () => {
+    const val = parseFloat(wInput.value);
     if(!val) return;
-    const kg = unitToKg(val, unit);
-    const today = todayKey();
-    // One entry per day -- logging again today updates it rather than
-    // padding the average with duplicates from the same day.
-    const withoutToday = (client.weightLog || []).filter(e => e.date !== today);
-    client.weightLog = withoutToday.concat([{id: rid(), date: today, weightKg: kg}]);
-    client.bodyWeight = String(val);
+    const kg = unitToKg(val, wUnit);
+    const entryDate = wDateInput.value || today;
+    // One entry per day -- logging again for a date that already has an
+    // entry updates it rather than padding the average with duplicates.
+    const withoutDate = (client.weightLog || []).filter(e => e.date !== entryDate);
+    client.weightLog = withoutDate.concat([{id: rid(), date: entryDate, weightKg: kg}]);
+    if(entryDate === today) client.bodyWeight = String(val);
     saveTarget();
     rerenderHost();
   };
-  addBtn.addEventListener("click", commitLog);
-  input.addEventListener("keydown", e => { if(e.key === "Enter" && input.value){ e.preventDefault(); commitLog(); } });
+  wAddBtn.addEventListener("click", commitWeightLog);
+  wInput.addEventListener("keydown", e => { if(e.key === "Enter" && wInput.value){ e.preventDefault(); commitWeightLog(); } });
+  body.appendChild(weightBox);
 
-  return box;
+  // -------------------------- Measurements -------------------------------
+  const mSorted = client.measurementLog.slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const measureBox = document.createElement("div");
+  measureBox.className = "statsbox";
+  measureBox.style.marginTop = "14px";
+  const latestEntry = mSorted[mSorted.length - 1];
+  measureBox.innerHTML = `
+    <div class="statsbox-head">
+      <h3>Measurements</h3>
+      <select id="measureUnit" class="measureunitselect">
+        <option value="cm" ${mUnit !== "in" ? "selected" : ""}>cm</option>
+        <option value="in" ${mUnit === "in" ? "selected" : ""}>in</option>
+      </select>
+    </div>
+    <div class="statshint">Fill in whatever you're measuring this time — you don't need all of them every time.</div>
+    ${latestEntry ? `
+      <div class="targetrow" style="margin:8px 0 12px; flex-wrap:wrap;">
+        ${BODY_MEASUREMENTS.filter(m => latestEntry[m.key] != null).map(m =>
+          `<div class="targetstat"><b>${esc(round1(cmToUnit(latestEntry[m.key], mUnit)))}${esc(mUnit)}</b><span>${esc(m.label)}</span></div>`
+        ).join("")}
+      </div>
+    ` : '<div class="emptyprogs">No measurements logged yet — add the first one below.</div>'}
+    <div id="measureLogListEl"></div>
+    <div class="addstat-row measurerow" style="margin-top:8px;">
+      ${BODY_MEASUREMENTS.map(m => `<div class="addstat-field narrow"><input type="number" min="0" step="0.1" data-mkey="${m.key}" placeholder="${esc(m.label)}"></div>`).join("")}
+      <div class="addstat-field narrow"><input type="date" id="measureLogDate" max="${esc(today)}" value="${esc(today)}"></div>
+      <button class="addstatbtn" id="addMeasureLogBtn" type="button" disabled>+ Log Measurements</button>
+    </div>
+  `;
+  const measureListEl = measureBox.querySelector("#measureLogListEl");
+  if(mSorted.length){
+    mSorted.slice().reverse().forEach(e => {
+      const row = document.createElement("div");
+      row.className = "statrow";
+      const summary2 = BODY_MEASUREMENTS.filter(m => e[m.key] != null)
+        .map(m => `${m.label} ${round1(cmToUnit(e[m.key], mUnit))}${mUnit}`)
+        .join(", ");
+      row.innerHTML = `
+        <div><b>${esc(summary2 || "—")}</b><span class="statmeta">${esc(fmtShortDate(e.date))}</span></div>
+        <button class="statremove" title="Remove" type="button">✕</button>
+      `;
+      row.querySelector(".statremove").addEventListener("click", () => {
+        client.measurementLog = client.measurementLog.filter(x => x.id !== e.id);
+        saveTarget();
+        rerenderHost();
+      });
+      measureListEl.appendChild(row);
+    });
+  }
+  measureBox.querySelector("#measureUnit").addEventListener("change", e => {
+    client.measurementUnit = e.target.value;
+    saveTarget();
+    rerenderHost();
+  });
+  const mFieldInputs = Array.from(measureBox.querySelectorAll("[data-mkey]"));
+  const mDateInput = measureBox.querySelector("#measureLogDate");
+  const mAddBtn = measureBox.querySelector("#addMeasureLogBtn");
+  const refreshMeasureAddBtn = () => { mAddBtn.disabled = !mFieldInputs.some(inp => inp.value); };
+  mFieldInputs.forEach(inp => inp.addEventListener("input", refreshMeasureAddBtn));
+  mAddBtn.addEventListener("click", () => {
+    const entry = {id: rid(), date: mDateInput.value || today};
+    let any = false;
+    mFieldInputs.forEach(inp => {
+      const val = parseFloat(inp.value);
+      if(val){ entry[inp.dataset.mkey] = unitToCm(val, mUnit); any = true; }
+    });
+    if(!any) return;
+    // One entry per day, same as weight -- logging again for a date that
+    // already has one merges into it rather than creating a duplicate.
+    const existing = client.measurementLog.find(e => e.date === entry.date);
+    const merged = existing ? Object.assign({}, existing, entry, {id: existing.id}) : entry;
+    client.measurementLog = client.measurementLog.filter(e => e.date !== entry.date).concat([merged]);
+    saveTarget();
+    rerenderHost();
+  });
+  body.appendChild(measureBox);
+
+  // ---------------------------- Photos (later) ----------------------------
+  const photosNote = document.createElement("div");
+  photosNote.className = "cmempty";
+  photosNote.style.marginTop = "14px";
+  photosNote.textContent = "📷 Progress photos — coming soon.";
+  body.appendChild(photosNote);
+
+  return details;
 }
 
 function renderEditor(){
@@ -4817,6 +5021,13 @@ function buildTodayPanel(client, myPrograms){
     progLabel.className = "agendaprogramlabel";
     progLabel.textContent = "🏋️ " + (scheduled.program.name || "Program");
     progWrap.appendChild(progLabel);
+    // Same toggle shown on a program card under Training Plan -- it's a
+    // client-level setting, not a per-program one, but a client who only
+    // ever opens today's scheduled day from the Agenda (never Training
+    // Plan) had no way to find or turn it on before this.
+    if(weeks > 1){
+      progWrap.appendChild(buildSuggestWeightToggle(client));
+    }
     // Same collapsible day pill shown under Training Plan, sharing its
     // open/closed state (cmTrainingDayPillOpenIds) -- expanding today's
     // training here keeps it expanded if the client also opens Training
@@ -5093,7 +5304,7 @@ function buildClientBodyMetrics(client){
   `;
   sec.appendChild(bmBox);
 
-  sec.appendChild(buildWeightTrackerBox(client, renderClientModeView));
+  sec.appendChild(buildBodyMetricsPill(client, renderClientModeView));
 
   sec.querySelector("#cmAge").addEventListener("input", e => { client.age = e.target.value; scheduleClientSave(client); });
   sec.querySelector("#cmSex").addEventListener("change", e => { client.sex = e.target.value; scheduleClientSave(client); renderClientModeView(); });
@@ -5533,6 +5744,25 @@ function buildClientDayPill(program, day, client, weeks){
   return wrapper;
 }
 
+// Shared by buildClientProgramCard (under Training Plan) and buildTodayPanel
+// (under Today's Agenda) -- this is a client-level setting (client.
+// suggestWeightFromPrevious), not tied to any one program, so it needs to be
+// reachable from wherever the client actually looks at their training, not
+// just from Training Plan. Before this, a client who only ever opened a
+// scheduled day from their Agenda had no way to find or turn this on at all.
+function buildSuggestWeightToggle(client){
+  const suggestToggle = document.createElement("label");
+  suggestToggle.className = "cmsuggesttogglelabel";
+  suggestToggle.title = "When on, weeks after Week 1 show a suggested weight worked out from what was prescribed last week and what you actually logged. It's just a hint -- your coach's own prescription above it doesn't change.";
+  suggestToggle.innerHTML = `<input type="checkbox" ${client.suggestWeightFromPrevious ? "checked" : ""}> Suggest weight used based on previously?`;
+  suggestToggle.querySelector("input").addEventListener("change", e => {
+    client.suggestWeightFromPrevious = e.target.checked;
+    scheduleClientSave(client);
+    renderClientModeView();
+  });
+  return suggestToggle;
+}
+
 function buildClientProgramCard(program, client){
   const card = document.createElement("div");
   card.className = "cmprogram";
@@ -5547,16 +5777,7 @@ function buildClientProgramCard(program, client){
   // Only meaningful once there's a Week 2+ to suggest from -- a single-week
   // program has no "last week" to compare against.
   if(weeks > 1){
-    const suggestToggle = document.createElement("label");
-    suggestToggle.className = "cmsuggesttogglelabel";
-    suggestToggle.title = "When on, weeks after Week 1 show a suggested weight worked out from what was prescribed last week and what you actually logged. It's just a hint -- your coach's own prescription above it doesn't change.";
-    suggestToggle.innerHTML = `<input type="checkbox" ${client.suggestWeightFromPrevious ? "checked" : ""}> Suggest weight used based on previously?`;
-    suggestToggle.querySelector("input").addEventListener("change", e => {
-      client.suggestWeightFromPrevious = e.target.checked;
-      scheduleClientSave(client);
-      renderClientModeView();
-    });
-    card.appendChild(suggestToggle);
+    card.appendChild(buildSuggestWeightToggle(client));
   }
 
   (program.days || []).forEach(day => {
@@ -5651,6 +5872,7 @@ function renderClientModeView(){
   if(!client.agendaNotes){ client.agendaNotes = {}; needsCmSave = true; }
   if(!client.trainingSchedule){ client.trainingSchedule = {}; needsCmSave = true; }
   if(!client.weightLog){ client.weightLog = []; needsCmSave = true; }
+  if(!client.measurementLog){ client.measurementLog = []; needsCmSave = true; }
   // What this client can see under The Road Map -- set on their profile by
   // the coach (see renderClientProfile). Defaults to everything on so a
   // client from before this feature existed doesn't suddenly lose access to
@@ -5662,7 +5884,7 @@ function renderClientModeView(){
 
   const header = document.createElement("div");
   header.className = "cmheader";
-  header.innerHTML = `<h2>Welcome, ${esc(client.name || "there")}</h2><span class="savebadge" id="cmSaveStatus"></span><button class="cmlogout" id="cmLogoutBtn" type="button">Log out</button>`;
+  header.innerHTML = `<h2>Welcome, ${esc(firstNameOf(client) || "there")}</h2><span class="savebadge" id="cmSaveStatus"></span><button class="cmlogout" id="cmLogoutBtn" type="button">Log out</button>`;
   host.appendChild(header);
 
   const trainingOn = client.visibility.training !== false;
@@ -5840,6 +6062,7 @@ function renderClientProfile(){
   if(!client.agendaNotes){ client.agendaNotes = {}; needsSave = true; }
   if(!client.trainingSchedule){ client.trainingSchedule = {}; needsSave = true; }
   if(!client.weightLog){ client.weightLog = []; needsSave = true; }
+  if(!client.measurementLog){ client.measurementLog = []; needsSave = true; }
   // Defaults to everything on -- see renderClientModeView for where these
   // three toggles actually take effect.
   if(!client.visibility){ client.visibility = {training: true, rehab: true, nutrition: true}; needsSave = true; }
@@ -5862,8 +6085,16 @@ function renderClientProfile(){
 
   const head = document.createElement("div");
   head.className = "editor-head";
+  // First/last name split so the client's own "Welcome" header can greet
+  // them by first name only (see firstNameOf) -- a client added before this
+  // split existed has no client.firstName/lastName yet, so these default to
+  // however client.name (still the source of truth for every other display
+  // site) splits on its first space, rather than showing blank inputs for
+  // someone who already has a name on file.
+  const nameParts = splitClientName(client);
   head.innerHTML = `
-    <input class="proginput" id="clientNameInput" value="${esc(client.name||"")}" placeholder="Client name">
+    <input class="proginput" id="clientFirstNameInput" value="${esc(client.firstName || nameParts.first)}" placeholder="First name">
+    <input class="proginput" id="clientLastNameInput" value="${esc(client.lastName || nameParts.last)}" placeholder="Last name">
     <div class="editor-actions">
       <button class="iconbtn" id="previewClientBtn" type="button">👁 Preview Client View</button>
       <button class="iconbtn" id="delClientBtn" type="button">Delete</button>
@@ -5939,7 +6170,7 @@ function renderClientProfile(){
       `;
       body.appendChild(bmBox);
 
-      body.appendChild(buildWeightTrackerBox(client, renderClientProfile));
+      body.appendChild(buildBodyMetricsPill(client, renderClientProfile));
 
       const prefsLabel = document.createElement("div");
       prefsLabel.className = "field-label";
@@ -6569,10 +6800,22 @@ function renderClientProfile(){
 
   host.appendChild(wrap);
 
-  document.getElementById("clientNameInput").addEventListener("input", e => {
-    client.name = e.target.value;
+  const syncClientFullName = () => {
+    // client.name stays the combined full name and stays in sync
+    // automatically -- every other display site (client list, messages,
+    // print, profile hints, etc.) reads client.name and none of them need
+    // to change for this split to work.
+    client.name = [client.firstName, client.lastName].filter(Boolean).join(" ");
     scheduleClientSave(client);
     renderClientList();
+  };
+  document.getElementById("clientFirstNameInput").addEventListener("input", e => {
+    client.firstName = e.target.value;
+    syncClientFullName();
+  });
+  document.getElementById("clientLastNameInput").addEventListener("input", e => {
+    client.lastName = e.target.value;
+    syncClientFullName();
   });
   document.getElementById("bmAge").addEventListener("input", e => { client.age = e.target.value; scheduleClientSave(client); });
   document.getElementById("bmSex").addEventListener("change", e => { client.sex = e.target.value; scheduleClientSave(client); renderClientProfile(); });
@@ -6729,6 +6972,7 @@ async function initCustomExercises(){
     // that list afterward.
     renderMessageThreadList();
     safeRenderClientProfile();
+    renderNotificationsList();
     if(clientSession){
       const fresh = clientsCache.find(x => x.id === clientSession.id);
       if(fresh){ clientSession = fresh; safeRenderClientModeView(); }
@@ -6761,12 +7005,18 @@ initCustomExercises();
 // appears once she happens to click into a tab that loads it.
 messagesInited = true;
 initMessages();
+// Programs (and the session-log notes buried inside them) also get loaded
+// eagerly here, for the same reason as Messages just above -- the
+// Notifications tab's badge needs to be accurate the moment the dashboard
+// loads, not just once the coach happens to open Program Builder or THE
+// SQUAD first.
+ensureBuilderInited();
 // Called from src/main.js's watchAuthState every time the coach's session
 // changes (sign-in, sign-out, a code change) -- each is a no-op once it has
 // actually succeeded once (dbInitDone / messagesDbInitDone guard above),
 // so this safely covers the case where either was called before the
 // coach's session had actually resolved yet.
-window.retryDbInit = () => { initCustomExercises(); initMessages(); initEnquiries(); };
+window.retryDbInit = () => { initCustomExercises(); initMessages(); initEnquiries(); ensureBuilderInited(); };
 
 resolveOwnerStatus();
 
@@ -6804,6 +7054,115 @@ function autoUnarchiveClientsWithUnread(){
       c.messagesArchived = false;
       scheduleClientSave(c);
     }
+  });
+}
+
+// ---------------------------------------------------------------------
+// Notifications -- session notes a client left after saving a finished
+// training day (see buildSessionSaveBox's notes field), surfaced here so
+// the coach doesn't have to open each client's own profile ("Session Notes
+// (from Client)" pill, buildSessionLogHistoryBox) to catch them. No
+// dedicated table or subscription of its own: this is derived straight
+// from the same programsCache/clientsCache already loaded for Program
+// Builder and THE SQUAD (see ensureBuilderInited(), called eagerly at the
+// bottom of this file), so a new note shows up here live, same as
+// everywhere else in the app.
+function notificationEntries(){
+  const out = [];
+  programsCache.forEach(program => {
+    const byClient = program.sessionLogsByClient || {};
+    Object.keys(byClient).forEach(clientId => {
+      (byClient[clientId] || []).forEach(entry => {
+        if(!entry.notes) return; // notifications are specifically about left notes, not every saved session
+        out.push({program, clientId, client: clientsCache.find(c => c.id === clientId), entry});
+      });
+    });
+  });
+  out.sort((a, b) => (b.entry.completedAt || "").localeCompare(a.entry.completedAt || ""));
+  return out;
+}
+
+function updateNotificationsTabBadge(){
+  const btn = tabBtns.notifications;
+  if(!btn) return;
+  const count = notificationEntries().filter(n => !n.entry.seenByCoach).length;
+  let badge = btn.querySelector(".msgunreadbadge");
+  if(count > 0){
+    if(!badge){
+      badge = document.createElement("span");
+      badge.className = "msgunreadbadge";
+      btn.appendChild(badge);
+    }
+    badge.textContent = count;
+  } else if(badge){
+    badge.remove();
+  }
+}
+
+// Marks one note as read -- a narrow, targeted update (just this one
+// entry's seenByCoach flag, inside just this one program's
+// sessionLogsByClient) rather than a full program save, for the same
+// reason scheduleClientProgramSessionLogsSave never saves the whole
+// program doc: a client could be mid-save on their own actual sets/swaps
+// for this exact program at the same moment, and a wider save here could
+// clobber that.
+async function markSessionNoteSeen(program, clientId, entryId){
+  const list = (program.sessionLogsByClient && program.sessionLogsByClient[clientId]) || [];
+  const idx = list.findIndex(e => e.id === entryId);
+  if(idx === -1 || list[idx].seenByCoach) return;
+  const updatedList = list.slice();
+  updatedList[idx] = Object.assign({}, updatedList[idx], {seenByCoach: true});
+  const byClient = Object.assign({}, program.sessionLogsByClient || {}, {[clientId]: updatedList});
+  program.sessionLogsByClient = byClient;
+  const cacheIdx = programsCache.findIndex(p => p.id === program.id);
+  if(cacheIdx > -1) programsCache[cacheIdx] = Object.assign({}, programsCache[cacheIdx], {sessionLogsByClient: byClient});
+  updateNotificationsTabBadge();
+  if(programsCol && !String(program.id).startsWith("local-")){
+    try{
+      await programsCol.doc(program.id).update({sessionLogsByClient: byClient, updatedAt: new Date().toISOString()});
+    }catch(e){
+      console.error("[markSessionNoteSeen]", e);
+      // Best-effort -- worst case an already-read note shows as new again
+      // once a fresh snapshot lands, never a lost note.
+    }
+  }
+}
+
+function renderNotificationsList(){
+  const el = document.getElementById("notificationListEl");
+  if(!el) return;
+  el.innerHTML = "";
+  const entries = notificationEntries();
+  updateNotificationsTabBadge();
+  if(!entries.length){
+    el.innerHTML = '<div class="emptyprogs">No session notes from clients yet — they\'ll show up here as soon as one is saved.</div>';
+    return;
+  }
+  entries.forEach(({program, clientId, client, entry}) => {
+    const row = document.createElement("div");
+    row.className = "notificationrow" + (entry.seenByCoach ? "" : " unseen");
+    const where = [entry.programName, entry.dayLabel, entry.weekLabel].filter(Boolean).join(" — ");
+    const rpeTag = entry.rpe ? `RPE ${entry.rpe}` : "";
+    const meta = [where, rpeTag].filter(Boolean).join(" · ");
+    row.innerHTML = `
+      <div class="notificationhead">
+        <span class="notificationclient">${esc(client ? (client.name || "Unnamed client") : "Former client")}</span>
+        <span class="notificationdate">${esc(fmtDateTime(entry.completedAt))}</span>
+      </div>
+      <div class="notificationmeta">${esc(meta)}</div>
+      <div class="notificationnote">${esc(entry.notes)}</div>
+    `;
+    if(client){
+      // Deliberately NOT stopping propagation -- the row's own click
+      // handler just below also fires, so clicking the name both jumps to
+      // the profile AND marks the note seen (clicking anywhere else on the
+      // row does the latter only).
+      row.querySelector(".notificationclient").addEventListener("click", () => {
+        goToClientProfile(client.id);
+      });
+    }
+    row.addEventListener("click", () => markSessionNoteSeen(program, clientId, entry.id));
+    el.appendChild(row);
   });
 }
 
@@ -6962,7 +7321,10 @@ function renderMessageThread(){
   const threadHead = document.createElement("div");
   threadHead.className = "msgthreadhead";
   const heading = document.createElement("h4");
+  heading.className = "msgthreadclientlink";
   heading.textContent = client.name || "Client";
+  heading.title = "Open " + (client.name || "this client") + "'s profile in THE SQUAD";
+  heading.addEventListener("click", () => goToClientProfile(client.id));
   threadHead.appendChild(heading);
 
   const archiveBtn = document.createElement("button");
