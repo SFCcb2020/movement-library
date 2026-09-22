@@ -297,6 +297,34 @@ footer{margin-top:34px; text-align:center; color:var(--ink-dim); font-size:12.5p
 .goalshistoryrow{font-size:11.5px; color:var(--ink-dim); padding:3px 0 3px 12px; display:flex; gap:8px;}
 .goalshistorydate{flex:none; font-weight:600; color:var(--ink);}
 
+/* ---------------------------------------------------------------------
+   Notifications -- session notes clients left after saving a training day
+--------------------------------------------------------------------- */
+.notificationrow{
+  background:var(--surface-2); border-radius:10px; padding:12px 14px; margin-bottom:10px; cursor:pointer;
+  border-left:3px solid transparent;
+}
+.notificationrow.unseen{border-left-color:var(--accent);}
+.notificationhead{display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap;}
+.notificationclient{font-weight:700; font-size:13.5px; cursor:pointer; text-decoration:underline; text-decoration-color:transparent; transition:text-decoration-color .12s;}
+.notificationclient:hover{text-decoration-color:currentColor; color:var(--accent);}
+.notificationdate{font-size:11.5px; color:var(--ink-dim);}
+.notificationmeta{font-size:11.5px; color:var(--ink-dim); margin-top:2px;}
+.notificationnote{font-size:13px; margin-top:6px; line-height:1.4;}
+
+/* ---------------------------------------------------------------------
+   Body Metrics -- weight/measurement trend chart
+--------------------------------------------------------------------- */
+.cmlinechart{width:100%; height:70px; margin:2px 0 12px;}
+.cmlinechart-line{fill:none; stroke:var(--accent); stroke-width:2.2; vector-effect:non-scaling-stroke;}
+.cmlinechart-avg{stroke:var(--ink-dim); stroke-width:1; stroke-dasharray:4 3; vector-effect:non-scaling-stroke;}
+.cmlinechart-dot{fill:var(--accent);}
+.measureunitselect{
+  font-family:inherit; font-size:11.5px; border:1px solid var(--line); border-radius:6px; padding:3px 6px;
+  background:var(--bg); color:var(--ink);
+}
+.measurerow .addstat-field.narrow input{width:100%;}
+
 .clientlinklist{display:flex; flex-direction:column; gap:8px; margin-bottom:8px;}
 .clientlinkcard{
   background:var(--surface-2); border-radius:8px; padding:10px 14px; display:flex; align-items:center;
@@ -798,6 +826,8 @@ footer{margin-top:34px; text-align:center; color:var(--ink-dim); font-size:12.5p
 }
 .msgthreadhead{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;}
 .msgthread h4{font-family:"Oswald",sans-serif; font-size:15px; margin:0; color:var(--ink);}
+.msgthreadclientlink{cursor:pointer; text-decoration:underline; text-decoration-color:transparent; transition:text-decoration-color .12s;}
+.msgthreadclientlink:hover{text-decoration-color:currentColor; color:var(--accent);}
 .msgarchivebtn{
   flex:none; border:1px solid var(--line); background:var(--surface-2); color:var(--ink-dim); border-radius:999px;
   padding:6px 14px; font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer; white-space:nowrap;
