@@ -22,6 +22,8 @@ let clientSavePendingIds = {}; // client id -> true while that client's edit is 
 let clientSaveVersion = {}; // client id -> counter bumped on every scheduleClientSave call, so an older overlapping save's completion can't prematurely clear a newer one's pending guard
 let currentClientId = null;
 let clientProgActualsSaveTimer = null;
+let clientProgSwapsSaveTimer = null;
+let clientProgSessionLogsSaveTimer = null;
 let taskPresetsOpen = false;
 let clientGoalPresetsOpen = false; // separate open/closed state for the client's own "suggested tasks" picker in Tasks for the Big Picture, distinct from the coach's own picker above
 // The client's own "+ Add Goal" row supports an optional day-picker so a
@@ -65,6 +67,9 @@ let cmWeekHistoryOpenIds = new Set();
 // keyed by client id -- shown on both the client's own Big Picture Goals
 // pill and the coach's Client Profile page.
 let cmGoalsHistoryOpenIds = new Set();
+// Which clients currently have their "Session Notes (from Client)" history
+// expanded on the coach's own Client Profile page, keyed by client id.
+let cmSessionLogHistoryOpenIds = new Set();
 
 // Task-adding is a two-step "pick, then Save" flow (see renderClientProfile):
 // nothing lands on the client's real task list until the coach hits the
@@ -1776,6 +1781,166 @@ function summarizeLoggedSetsFor(program, clientId, ex, weekIndex){
     .map((s, idx) => (s && (s.reps || s.weight)) ? `Set ${idx + 1}: ${s.reps || "—"}${s.weight ? " @ " + s.weight : ""}` : null)
     .filter(Boolean)
     .join(", ");
+}
+
+// ---------------------------------------------------------------------
+// Per-client, per-week exercise swaps.
+//
+// A client might not have access to whatever's prescribed on a given day
+// (no barbell at the hotel gym, say) -- rather than let them silently skip
+// it or edit the shared prescription (which every other assigned client
+// would then see too), they can swap just their own copy of one exercise
+// for ONE specific week. It lives at
+// program.swapsByClient[clientId][exerciseId][weekIndex] = a small
+// exercise-identity record (exercise/group/sub/plane/pattern/joint/
+// primary/secondary) -- the same shape the coach's own swap already writes
+// directly onto ex in Program Builder (see buildDayEl's onSwap), just kept
+// OUTSIDE the shared days/progression tree and scoped to one week, so:
+//  - the coach's prescription is never touched by a client's swap, and
+//  - the very next week reverts to whatever's actually prescribed, since
+//    there's simply no swap entry for that week until the client swaps
+//    again -- exactly the "following week shows the original exercise"
+//    behavior asked for.
+// ---------------------------------------------------------------------
+
+function getClientSwap(program, clientId, ex, weekIndex){
+  const byClient = program && program.swapsByClient && clientId ? program.swapsByClient[clientId] : null;
+  const byEx = byClient && ex && ex.id ? byClient[ex.id] : null;
+  return (byEx && byEx[weekIndex]) || null;
+}
+
+// Writes (or, passed null, clears) one client's swap for one exercise/week.
+// Reassigns each level rather than mutating in place, same reasoning as
+// setClientActuals -- any of it may still be the frozen object a db
+// snapshot handed back.
+function setClientSwap(program, clientId, ex, weekIndex, swapRecordOrNull){
+  const byClient = Object.assign({}, program.swapsByClient || {});
+  const byEx = Object.assign({}, byClient[clientId] || {});
+  const perWeek = (byEx[ex.id] || []).slice();
+  perWeek[weekIndex] = swapRecordOrNull || null;
+  byEx[ex.id] = perWeek;
+  byClient[clientId] = byEx;
+  program.swapsByClient = byClient;
+}
+
+// Persists program.swapsByClient the same three ways scheduleClientProgramActualsSave
+// already does for logged sets -- see that function for why each branch
+// only ever sends this one client's own slice.
+function scheduleClientProgramSwapsSave(program){
+  cmSetSaveStatus("Saving…");
+  clearTimeout(clientProgSwapsSaveTimer);
+  clientProgSwapsSaveTimer = setTimeout(async () => {
+    if(!program || !clientSession) return;
+    const actingClientId = clientSession.id;
+    const isClientViewer = programHasClient(program, actingClientId);
+    if(programsCol && !String(program.id).startsWith("local-")){
+      const payload = {swapsByClient: program.swapsByClient || {}, updatedAt: new Date().toISOString()};
+      try{
+        await programsCol.doc(program.id).update(payload);
+        cmSetSaveStatus("Saved");
+      }catch(e){
+        cmSetSaveStatus(isClientViewer ? "Couldn't save — ask your coach to check your access" : "Couldn't save — try again in a moment");
+      }
+    } else if(isClientViewer && window.__clientPortal && clientSession.accessCode){
+      try{
+        const mySlice = (program.swapsByClient && program.swapsByClient[actingClientId]) || {};
+        await window.__clientPortal.saveProgramSwapsForCode(clientSession.accessCode, program.id, mySlice);
+        cmSetSaveStatus("Saved");
+      }catch(e){
+        console.error("[scheduleClientProgramSwapsSave/client]", e);
+        cmSetSaveStatus("Couldn't save — ask your coach to check your access");
+      }
+    } else {
+      const idx = programsCache.findIndex(p => p.id === program.id);
+      if(idx > -1) programsCache[idx] = Object.assign({}, programsCache[idx], {swapsByClient: program.swapsByClient || {}});
+      cmSetSaveStatus("Saved (this session only)");
+    }
+  }, 600);
+}
+
+// ---------------------------------------------------------------------
+// Per-client finished-session log: a dated entry per training day the
+// client marks done (see buildSessionSaveBox), holding their overall RPE
+// and any notes -- separate from per-exercise set logging above. Lives at
+// program.sessionLogsByClient[clientId] = an ARRAY (not keyed by day/week,
+// since the same day can genuinely be completed more than once, e.g. a
+// missed day made up later) so nothing ever silently overwrites an earlier
+// entry. Surfaces back to the coach on this client's own profile page --
+// see buildSessionLogHistoryBox.
+// ---------------------------------------------------------------------
+
+function addClientSessionLog(program, clientId, entry){
+  const byClient = Object.assign({}, program.sessionLogsByClient || {});
+  byClient[clientId] = (byClient[clientId] || []).concat([entry]);
+  program.sessionLogsByClient = byClient;
+}
+
+function scheduleClientProgramSessionLogsSave(program){
+  cmSetSaveStatus("Saving…");
+  clearTimeout(clientProgSessionLogsSaveTimer);
+  clientProgSessionLogsSaveTimer = setTimeout(async () => {
+    if(!program || !clientSession) return;
+    const actingClientId = clientSession.id;
+    const isClientViewer = programHasClient(program, actingClientId);
+    if(programsCol && !String(program.id).startsWith("local-")){
+      const payload = {sessionLogsByClient: program.sessionLogsByClient || {}, updatedAt: new Date().toISOString()};
+      try{
+        await programsCol.doc(program.id).update(payload);
+        cmSetSaveStatus("Saved");
+      }catch(e){
+        cmSetSaveStatus(isClientViewer ? "Couldn't save — ask your coach to check your access" : "Couldn't save — try again in a moment");
+      }
+    } else if(isClientViewer && window.__clientPortal && clientSession.accessCode){
+      try{
+        const mySlice = (program.sessionLogsByClient && program.sessionLogsByClient[actingClientId]) || [];
+        await window.__clientPortal.saveProgramSessionLogsForCode(clientSession.accessCode, program.id, mySlice);
+        cmSetSaveStatus("Saved");
+      }catch(e){
+        console.error("[scheduleClientProgramSessionLogsSave/client]", e);
+        cmSetSaveStatus("Couldn't save — ask your coach to check your access");
+      }
+    } else {
+      const idx = programsCache.findIndex(p => p.id === program.id);
+      if(idx > -1) programsCache[idx] = Object.assign({}, programsCache[idx], {sessionLogsByClient: program.sessionLogsByClient || {}});
+      cmSetSaveStatus("Saved (this session only)");
+    }
+  }, 600);
+}
+
+// A rotating set of short, upbeat confirmations shown right after a client
+// saves a finished training day -- picked at random but never the same one
+// twice in a row, so it doesn't feel canned after a few sessions.
+const SESSION_SAVED_MESSAGES = [
+  "Great work! 💪",
+  "Another day of getting stronger, done.",
+  "Session logged — nice work today.",
+  "That's in the bank. Well done!",
+  "Consistency like this is what gets results.",
+  "Done and dusted — see you next session!",
+  "Strong work. Your coach will see this.",
+  "Logged! Keep stacking days like this.",
+  "Nailed it. On to the next one.",
+  "Solid session. Proud of the effort.",
+];
+let lastSessionMessageIdx = -1;
+function randomSessionSavedMessage(){
+  if(SESSION_SAVED_MESSAGES.length <= 1) return SESSION_SAVED_MESSAGES[0] || "";
+  let idx;
+  do { idx = Math.floor(Math.random() * SESSION_SAVED_MESSAGES.length); } while(idx === lastSessionMessageIdx);
+  lastSessionMessageIdx = idx;
+  return SESSION_SAVED_MESSAGES[idx];
+}
+
+// A timestamp-aware sibling of fmtShortDate (which only ever receives plain
+// YYYY-MM-DD keys elsewhere in this file) -- session log entries carry a
+// full ISO instant, and the coach genuinely benefits from seeing the time
+// here, not just the date, since more than one session can land on the
+// same day.
+function fmtDateTime(iso){
+  if(!iso) return "";
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, {month: "short", day: "numeric"}) + " · " + d.toLocaleTimeString(undefined, {hour: "numeric", minute: "2-digit"});
 }
 
 // Client-facing "Suggest weight used based on previously?" toggle -- an
@@ -4742,6 +4907,40 @@ function buildGoalsHistoryBox(client){
   return hist;
 }
 
+// Coach-side only: every training day this client has finished and saved
+// from their own view (see buildSessionSaveBox), gathered across every
+// program they're assigned to and shown newest first. Read-only -- a
+// client can't come back and edit a session once it's logged, so this is
+// a genuine record, not another editable field.
+function buildSessionLogHistoryBox(client){
+  const myPrograms = programsCache.filter(p => programHasClient(p, client.id));
+  const entries = [];
+  myPrograms.forEach(p => {
+    ((p.sessionLogsByClient && p.sessionLogsByClient[client.id]) || []).forEach(e => entries.push(e));
+  });
+  entries.sort((a, b) => (b.completedAt || "").localeCompare(a.completedAt || ""));
+  if(!entries.length) return null;
+  const hist = document.createElement("details");
+  hist.className = "goalshistory";
+  hist.open = cmSessionLogHistoryOpenIds.has(client.id);
+  hist.addEventListener("toggle", () => {
+    if(hist.open) cmSessionLogHistoryOpenIds.add(client.id); else cmSessionLogHistoryOpenIds.delete(client.id);
+  });
+  const summary = document.createElement("summary");
+  summary.textContent = `Sessions logged (${entries.length})`;
+  hist.appendChild(summary);
+  entries.forEach(e => {
+    const row = document.createElement("div");
+    row.className = "goalshistoryrow";
+    const where = [e.programName, e.dayLabel, e.weekLabel].filter(Boolean).join(" — ");
+    const rpeTag = e.rpe ? `RPE ${e.rpe}` : "";
+    const line = [where, rpeTag].filter(Boolean).join(" · ") + (e.notes ? ` — ${e.notes}` : "");
+    row.innerHTML = `<span class="goalshistorydate">${esc(fmtDateTime(e.completedAt))}</span><span>${esc(line)}</span>`;
+    hist.appendChild(row);
+  });
+  return hist;
+}
+
 function buildClientStatsView(client){
   // Reuses the exact same add/remove/unit-toggle stats box as the coach's
   // own client profile page -- the client can log a rep-max test they know
@@ -4986,21 +5185,67 @@ function buildClientExRow(ex, program, weeks, weekIndex, client){
   row.className = "cmexrow";
   if(!ex.id) ex.id = rid(); // safety net for any older exercise saved before ids were added
 
-  const head = document.createElement("div");
-  head.className = "cmexhead";
-  const nameEl = document.createElement("div");
-  nameEl.className = "cmexname";
-  nameEl.textContent = ex.exercise;
-  head.appendChild(nameEl);
-  appendWatchDemoLink(head, ex);
-  row.appendChild(head);
-
   // Per-set logging works the same whether this program has one week or
   // many -- progressionOf(ex, 1) just treats a single-week program as a
   // one-entry progression, so there's only ever one code path to maintain.
   const prog = progressionOf(ex, weeks);
   const i = Math.max(0, Math.min(weeks - 1, weekIndex || 0));
   const wk = prog[i] || (prog[i] = {});
+
+  // A swap only ever applies to the exact week it was made in -- see
+  // getClientSwap/setClientSwap above -- so this week might be swapped even
+  // while other weeks of the same exercise are still whatever's prescribed.
+  const swap = getClientSwap(program, clientId, ex, i);
+  const displayEx = swap || ex;
+
+  const head = document.createElement("div");
+  head.className = "cmexhead";
+  const nameWrap = document.createElement("div");
+  const nameEl = document.createElement("div");
+  nameEl.className = "cmexname";
+  nameEl.textContent = displayEx.exercise;
+  nameWrap.appendChild(nameEl);
+  if(swap){
+    const swapNote = document.createElement("div");
+    swapNote.className = "cmswapnote";
+    swapNote.textContent = "Swapped from " + ex.exercise + " for this week";
+    nameWrap.appendChild(swapNote);
+  }
+  head.appendChild(nameWrap);
+  appendWatchDemoLink(head, displayEx);
+
+  const exActions = document.createElement("div");
+  exActions.className = "exrow-actions";
+  const swapBtn = document.createElement("button");
+  swapBtn.type = "button";
+  swapBtn.className = "exswap cmexswap";
+  swapBtn.title = "Don't have access to this today? Swap it for something else, just for this week.";
+  swapBtn.textContent = "⇄ Swap";
+  exActions.appendChild(swapBtn);
+  if(swap){
+    const revertBtn = document.createElement("button");
+    revertBtn.type = "button";
+    revertBtn.className = "cmexrevert";
+    revertBtn.title = "Revert to the originally programmed exercise";
+    revertBtn.textContent = "↺ Revert";
+    revertBtn.addEventListener("click", () => {
+      setClientSwap(program, clientId, ex, i, null);
+      scheduleClientProgramSwapsSave(program);
+      renderClientModeView();
+    });
+    exActions.appendChild(revertBtn);
+  }
+  head.appendChild(exActions);
+  row.appendChild(head);
+
+  wireSwapButton(row, swapBtn, displayEx, m => {
+    setClientSwap(program, clientId, ex, i, {
+      exercise: m.exercise, group: m.group, sub: m.sub, plane: m.plane,
+      pattern: m.pattern, joint: m.joint, primary: m.primary, secondary: m.secondary,
+    });
+    scheduleClientProgramSwapsSave(program);
+    renderClientModeView();
+  });
 
   const nowBox = document.createElement("div");
   nowBox.className = "cmweeknow";
@@ -5044,7 +5289,7 @@ function buildClientExRow(ex, program, weeks, weekIndex, client){
     const earlierWeeks = prog
       .map((w, idx2) => Object.assign({}, w, {weekNum: idx2 + 1, weekIdx: idx2}))
       .slice(0, i)
-      .filter(w => w.sets || w.reps || w.load || hasLoggedAnySetFor(program, clientId, ex, w.weekIdx));
+      .filter(w => w.sets || w.reps || w.load || hasLoggedAnySetFor(program, clientId, ex, w.weekIdx) || getClientSwap(program, clientId, ex, w.weekIdx));
     if(earlierWeeks.length){
       const hist = document.createElement("details");
       hist.className = "cmweekhistory";
@@ -5060,7 +5305,12 @@ function buildClientExRow(ex, program, weeks, weekIndex, client){
         hr.className = "cmweekhistoryrow";
         const rx = `${w.sets || "—"}×${w.reps || "—"}${w.load ? " @ " + w.load : ""}`;
         const logged = summarizeLoggedSetsFor(program, clientId, ex, w.weekIdx);
-        hr.textContent = `Wk ${w.weekNum}: ${rx}` + (logged ? ` — ${logged}` : " — not logged");
+        // The prescribed exercise never changes -- ex.exercise is always
+        // what was programmed -- so a swap that week is called out as its
+        // own note rather than shown as if that were the actual prescription.
+        const wkSwap = getClientSwap(program, clientId, ex, w.weekIdx);
+        const swapNote = wkSwap ? ` — swapped to ${wkSwap.exercise}` : "";
+        hr.textContent = `Wk ${w.weekNum}: ${rx}${swapNote}` + (logged ? ` — ${logged}` : " — not logged");
         hist.appendChild(hr);
       });
       row.appendChild(hist);
@@ -5068,6 +5318,69 @@ function buildClientExRow(ex, program, weeks, weekIndex, client){
   }
 
   return row;
+}
+
+// The "finish and save" box at the bottom of a training day -- separate
+// from per-exercise logging above (buildClientSetRows), this marks the
+// WHOLE DAY as done: an overall RPE and optional notes, saved as a new
+// dated entry (see addClientSessionLog) rather than a field that gets
+// overwritten, since the same day can be completed more than once. Saving
+// clears the RPE/notes back to blank (ready for next time) and shows a
+// shuffled, upbeat confirmation so it's obvious the session actually
+// registered.
+function buildSessionSaveBox(program, day, client, weekIndex, weeks){
+  const box = document.createElement("div");
+  box.className = "cmsessionsave";
+
+  const label = document.createElement("div");
+  label.className = "field-label";
+  label.textContent = "Finish This Session";
+  box.appendChild(label);
+
+  const rpeRow = document.createElement("label");
+  rpeRow.className = "cmsessionrpe";
+  rpeRow.innerHTML = `RPE (how hard did that feel?)
+    <select>
+      <option value="">—</option>
+      ${Array.from({length: 10}, (_, n) => n + 1).map(n => `<option value="${n}">${n}</option>`).join("")}
+    </select>`;
+  box.appendChild(rpeRow);
+
+  const notesBox = document.createElement("textarea");
+  notesBox.className = "diagnosisbox cmsessionnotes";
+  notesBox.rows = 2;
+  notesBox.placeholder = "How did it go? Anything your coach should know…";
+  box.appendChild(notesBox);
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "cmsessionsavebtn";
+  saveBtn.textContent = "✓ Save Session";
+  box.appendChild(saveBtn);
+
+  const msgEl = document.createElement("div");
+  msgEl.className = "cmsessionsavedmsg";
+  msgEl.hidden = true;
+  box.appendChild(msgEl);
+
+  saveBtn.addEventListener("click", () => {
+    const entry = {
+      id: rid(), dayId: day.id, dayLabel: day.label || "Day",
+      programId: program.id, programName: program.name || "Program",
+      weekIndex, weekLabel: weeks > 1 ? `Week ${weekIndex + 1}` : "",
+      rpe: rpeRow.querySelector("select").value || "",
+      notes: notesBox.value.trim(),
+      completedAt: new Date().toISOString(),
+    };
+    addClientSessionLog(program, client.id, entry);
+    scheduleClientProgramSessionLogsSave(program);
+    rpeRow.querySelector("select").value = "";
+    notesBox.value = "";
+    msgEl.textContent = "✓ " + randomSessionSavedMessage();
+    msgEl.hidden = false;
+  });
+
+  return box;
 }
 
 // One training day as its own small collapsible pill -- used both under
@@ -5114,6 +5427,9 @@ function buildClientDayPill(program, day, client, weeks){
 
   const weekIndex = getSelectedWeekIndex(program, client.id);
   (day.exercises || []).forEach(ex => body.appendChild(buildClientExRow(ex, program, weeks, weekIndex, client)));
+  if((day.exercises || []).length){
+    body.appendChild(buildSessionSaveBox(program, day, client, weekIndex, weeks));
+  }
   wrapper.appendChild(body);
   return wrapper;
 }
@@ -5542,6 +5858,24 @@ function renderClientProfile(){
   notesBox.value = client.notes || "";
   notesBox.addEventListener("input", e => { client.notes = e.target.value; scheduleClientSave(client); });
   wrap.appendChild(notesBox);
+
+  const sessionLogLabel = document.createElement("div");
+  sessionLogLabel.className = "field-label";
+  sessionLogLabel.textContent = "Session Notes (from Client)";
+  wrap.appendChild(sessionLogLabel);
+  const sessionLogHint = document.createElement("div");
+  sessionLogHint.className = "statshint";
+  sessionLogHint.textContent = "What " + (client.name || "this client") + " logged when they saved a finished training session — RPE and any notes they added. Visible only to you.";
+  wrap.appendChild(sessionLogHint);
+  const sessionLogHist = buildSessionLogHistoryBox(client);
+  if(sessionLogHist){
+    wrap.appendChild(sessionLogHist);
+  } else {
+    const emptyEl = document.createElement("div");
+    emptyEl.className = "cmempty";
+    emptyEl.textContent = "No sessions logged yet.";
+    wrap.appendChild(emptyEl);
+  }
 
   client.agendaNotes = client.agendaNotes || {};
   const agendaNotesLabel = document.createElement("div");
