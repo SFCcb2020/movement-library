@@ -5263,8 +5263,13 @@ function renderMessageThreadList(){
 async function markClientMessagesReadByCoach(clientId){
   if(!messagesCol) return;
   const unread = messagesCache.filter(m => m.clientId === clientId && m.sender === "client" && !m.readByCoach);
+  if(!unread.length) return;
+  // Clear the unread badge right away rather than waiting on a realtime
+  // round-trip to confirm it -- same immediate-feedback pattern as sending.
+  unread.forEach(m => { m.readByCoach = true; });
+  renderMessageThreadList();
   for(const m of unread){
-    try{ await messagesCol.doc(m.id).update({readByCoach: true}); }catch(e){ /* badge just stays until the next successful attempt */ }
+    try{ await messagesCol.doc(m.id).update({readByCoach: true}); }catch(e){ /* badge already cleared locally; a later snapshot will reconcile if this failed */ }
   }
 }
 
@@ -5322,13 +5327,27 @@ function renderMessageThread(){
     if(!text || !messagesCol) return;
     sendBtn.disabled = true;
     try{
-      await messagesCol.add({clientId: client.id, sender: "coach", body: text.slice(0, 4000), readByCoach: true, readByClient: false});
+      const body = text.slice(0, 4000);
+      const ref = await messagesCol.add({clientId: client.id, sender: "coach", body, readByCoach: true, readByClient: false});
+      // Show the bubble immediately rather than waiting for the realtime
+      // subscription to report it back -- same add-then-render pattern
+      // already used for a brand new program/case/nutrition plan elsewhere
+      // in this file. The eventual snapshot (same id) reconciles this with
+      // the server's exact timestamp; nothing gets duplicated.
+      messagesCache = messagesCache.concat([{
+        id: ref.id, clientId: client.id, sender: "coach", body,
+        readByCoach: true, readByClient: false, createdAt: new Date().toISOString(),
+      }]);
       textarea.value = "";
+      renderMessageThreadList();
+      renderMessageThread();
+      safeRenderClientModeView();
     }catch(e){
       flashNote("Couldn't send that message (" + (e && e.code ? e.code : "error") + "). Try again.", "dbnoteMessages");
     }finally{
       sendBtn.disabled = false;
-      textarea.focus();
+      const freshTa = document.querySelector("#messagesHost .msgsendrow textarea");
+      if(freshTa) freshTa.focus();
     }
   };
   sendBtn.addEventListener("click", doSend);
@@ -5374,6 +5393,12 @@ function fmtMsgTime(iso){
 async function markClientMessagesRead(client){
   const unread = messagesCache.filter(m => m.clientId === client.id && m.sender === "coach" && !m.readByClient);
   if(!unread.length) return;
+  // Clear the "(N new)" badge on the pill right away -- don't make it wait
+  // on a network round-trip (this runs from the pill's own toggle handler,
+  // so push the rebuild to the next tick rather than replacing the details
+  // element while its own toggle event is still being dispatched).
+  unread.forEach(m => { m.readByClient = true; });
+  setTimeout(() => { renderClientModeView(); }, 0);
   try{
     if(messagesCol){
       for(const m of unread){
@@ -5381,11 +5406,10 @@ async function markClientMessagesRead(client){
       }
     } else if(window.__clientPortal && client.accessCode){
       await window.__clientPortal.markCoachMessagesReadForCode(client.accessCode);
-      unread.forEach(m => { m.readByClient = true; });
     }
   }catch(e){
     console.error("[markClientMessagesRead]", e);
-    // Not fatal -- the unread badge just won't clear until the next successful attempt.
+    // Not fatal -- the badge is already cleared locally; a later snapshot/poll will reconcile if this failed.
   }
 }
 
@@ -5430,8 +5454,14 @@ function buildClientMessagesPanel(client){
       if(messagesCol){
         // The coach's own browser, previewing this client -- goes through
         // the same db shim every other pill saves through in preview.
-        await messagesCol.add({clientId: client.id, sender: "client", body: text.slice(0, 4000), readByCoach: false, readByClient: true});
-        textarea.value = "";
+        const body = text.slice(0, 4000);
+        const ref = await messagesCol.add({clientId: client.id, sender: "client", body, readByCoach: false, readByClient: true});
+        messagesCache = messagesCache.concat([{
+          id: ref.id, clientId: client.id, sender: "client", body,
+          readByCoach: false, readByClient: true, createdAt: new Date().toISOString(),
+        }]);
+        renderClientModeView(); // show it immediately rather than waiting on the realtime snapshot
+        return;
       } else if(window.__clientPortal && client.accessCode){
         // A real client's browser -- no Supabase session, so this goes
         // through the access-code-checked RPC instead.
