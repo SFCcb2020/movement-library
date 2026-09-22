@@ -356,7 +356,7 @@ async function createProgramFromQueue(){
     exercises: queued.map(r => ({
       id: rid(), exercise: r.exercise, group: r.group, sub: r.sub, plane: r.plane,
       pattern: r.pattern, joint: r.joint, primary: r.primary, secondary: r.secondary,
-      sets: "", reps: "", load: "", rpe: "", notes: "",
+      sets: "", reps: "", load: "", rpe: "", rir: "", loadMode: "", notes: "",
     })),
   }];
   const data = {name: "New Program (from Queue)", days, weeks: 1, goal: "", coachNotes: "", liftStats: [], weightUnit: "kg", clientIds: [], createdAt: now, updatedAt: now};
@@ -828,6 +828,21 @@ async function resolveOwnerStatus(){
     isOwnerFlag = false; // a real runtime is present -- fail closed, not open
   }
   ownerResolved = true;
+  if(isOwnerFlag){
+    // A signed-in coach's own browser should never also be quietly holding
+    // a leftover client access code from an earlier test of the client
+    // login flow -- if it were, and something tried to auto-restore it,
+    // that would hijack the coach's own dashboard into client view on
+    // every future reload. (This is exactly what used to happen: see the
+    // removed tryRestoreClientSession() call that lived in
+    // initCustomExercises()'s clients-snapshot handler below.)
+    try{ window.__clientPortal && window.__clientPortal.clearSavedAccessCode(); }catch(e){ /* ignore */ }
+  } else if(!clientSession){
+    // Not a signed-in coach -- this browser might belong to a client
+    // returning to a previously-entered access code, so try to restore it
+    // silently before falling back to asking them to type it in again.
+    tryRestoreClientSession();
+  }
   applyAccessGate();
 }
 
@@ -1675,7 +1690,7 @@ function weeksCountFor(program){ return Math.max(1, Math.min(24, parseInt(progra
 // sets/reps/load as a starting point, and trims if weeks went down.
 function progressionOf(ex, weeks){
   if(!Array.isArray(ex.progression)) ex.progression = [];
-  const base = {sets: ex.sets||"", reps: ex.reps||"", load: ex.load||"", rpe: ex.rpe||""};
+  const base = {sets: ex.sets||"", reps: ex.reps||"", load: ex.load||"", rpe: ex.rpe||"", rir: ex.rir||""};
   // Build the extension as a separate array and concat it in, rather than
   // pushing onto ex.progression in place -- data that came straight from
   // the db capability's snapshot can be a read-only/frozen array, and
@@ -1687,8 +1702,62 @@ function progressionOf(ex, weeks){
     ex.progression = ex.progression.concat(extra);
   }
   if(ex.progression.length > weeks) ex.progression = ex.progression.slice(0, weeks);
-  ex.sets = ex.progression[0].sets; ex.reps = ex.progression[0].reps; ex.load = ex.progression[0].load; ex.rpe = ex.progression[0].rpe;
+  ex.sets = ex.progression[0].sets; ex.reps = ex.progression[0].reps; ex.load = ex.progression[0].load; ex.rpe = ex.progression[0].rpe; ex.rir = ex.progression[0].rir;
   return ex.progression;
+}
+
+// Which of %1RM / RIR / RPE (or none) an exercise's intensity is expressed
+// in. An explicit ex.loadMode (set the moment a coach picks one in the
+// builder) always wins. Programs saved before this feature existed have no
+// loadMode at all, so this falls back to guessing from whichever field
+// already has a value -- that way nothing already prescribed just vanishes
+// from a client's screen the moment this ships; it only shows the new
+// picker/single-field UI once the coach actually chooses a mode herself.
+function effectiveLoadMode(ex){
+  if(ex.loadMode) return ex.loadMode;
+  if(ex.rpe) return "rpe";
+  if(ex.rir) return "rir";
+  if(ex.load) return "percent";
+  return "blank";
+}
+
+// Plain cell text for one week's intensity value under an exercise's chosen
+// load mode -- "70%", "RIR 2", "RPE 8", or "" for blank mode (a brand-new
+// client with no 1RM/RIR/RPE reference point yet, so there's nothing to
+// show and nothing forcing the coach to fill in a number that doesn't
+// apply). `wk` is either the exercise itself (single-week programs) or one
+// week's progression entry (multi-week).
+function loadIntensityCell(ex, wk){
+  const mode = effectiveLoadMode(ex);
+  if(mode === "percent") return wk.load || "";
+  if(mode === "rir") return wk.rir ? "RIR " + wk.rir : "";
+  if(mode === "rpe") return wk.rpe ? "RPE " + wk.rpe : "";
+  return "";
+}
+
+// Same value, formatted as a trailing connector to append after "3×10" --
+// " @ 70%" for a percent, " (RIR 2)"/" (RPE 8)" for the other two, or ""
+// when there's nothing to show.
+function loadIntensityText(ex, wk){
+  const cell = loadIntensityCell(ex, wk);
+  if(!cell) return "";
+  return effectiveLoadMode(ex) === "percent" ? " @ " + cell : " (" + cell + ")";
+}
+
+const LOAD_MODE_FIELD_KEY = {percent: "load", rir: "rir", rpe: "rpe"};
+const LOAD_MODE_LABEL = {percent: "% of 1RM", rir: "RIR", rpe: "RPE"};
+const LOAD_MODE_PLACEHOLDER = {percent: "70%", rir: "2", rpe: "8"};
+
+// The "Prescribe by" <select> markup + change wiring shared by both the
+// single-week and multi-week (week-grid) exercise row layouts below.
+function buildLoadModeSelect(ex, mode){
+  const select = document.createElement("select");
+  select.className = "loadmodeselect";
+  select.innerHTML = ["percent", "rir", "rpe", "blank"].map(m => {
+    const label = m === "blank" ? "Blank (no reference)" : LOAD_MODE_LABEL[m];
+    return `<option value="${m}"${m === mode ? " selected" : ""}>${esc(label)}</option>`;
+  }).join("");
+  return select;
 }
 
 // Per-set logging: "3x9" prescribes 3 sets, so a client gets 3 entry rows
@@ -2097,16 +2166,30 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
     </div>
   `;
 
+  const mode = effectiveLoadMode(ex);
+
   if(weeks <= 1){
+    const fieldKey = LOAD_MODE_FIELD_KEY[mode]; // undefined for "blank" -- no field shown then
     row.innerHTML = topHtml + `
       <div class="exrow-fields">
         <div class="exfield narrow"><label>Sets</label><input type="text" data-f="sets" value="${esc(ex.sets||"")}" placeholder="4"></div>
         <div class="exfield narrow"><label>Reps</label><input type="text" data-f="reps" value="${esc(ex.reps||"")}" placeholder="8"></div>
-        <div class="exfield narrow"><label>Load</label><input type="text" data-f="load" value="${esc(ex.load||"")}" placeholder="70%"></div>
-        <div class="exfield narrow"><label>RPE</label><input type="text" data-f="rpe" value="${esc(ex.rpe||"")}" placeholder="8"></div>
+        <div class="exfield narrow loadmodefield"><label>Prescribe by</label></div>
+        ${fieldKey ? `<div class="exfield narrow"><label>${esc(LOAD_MODE_LABEL[mode])}</label><input type="text" data-f="${fieldKey}" value="${esc(ex[fieldKey]||"")}" placeholder="${esc(LOAD_MODE_PLACEHOLDER[mode])}"></div>` : `<div class="exfield narrow loadmodeblank"><label>&nbsp;</label><span class="loadmodeblanknote">No reference — client's own judgement</span></div>`}
         <div class="exfield notes"><label>Notes</label><input type="text" data-f="notes" value="${esc(ex.notes||"")}" placeholder="e.g. safety squat bar, tempo 3-1-1, cue: chest up"></div>
       </div>
     `;
+    // Inserted as a real element (not raw HTML) so its change handler can
+    // be wired directly, same as every other control on this row.
+    const prescribeByWrap = row.querySelector(".loadmodefield");
+    const select = buildLoadModeSelect(ex, mode);
+    prescribeByWrap.appendChild(select);
+    select.addEventListener("change", () => {
+      ex.loadMode = select.value;
+      onChange();
+      renderEditor(); // rebuild so the right single field (or blank note) shows
+    });
+
     row.querySelectorAll("input[data-f]").forEach(inp => {
       inp.addEventListener("input", () => {
         ex[inp.dataset.f] = inp.value;
@@ -2123,14 +2206,17 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
     // a time, so it follows whichever client the "Referencing progress
     // for" picker above has selected (defaults to the only/first one).
     const refClientId = builderRefClientIdFor(program);
+    const fieldKey = LOAD_MODE_FIELD_KEY[mode]; // undefined for "blank"
     row.innerHTML = topHtml + `
+      <div class="exrow-fields">
+        <div class="exfield narrow loadmodefield"><label>Prescribe by</label></div>
+      </div>
       <div class="weekgrid">
         <div class="weekcol weekcol-label">
           <div class="weeklabel">&nbsp;</div>
           <div class="rowlabel">Sets</div>
           <div class="rowlabel">Reps</div>
-          <div class="rowlabel">Load</div>
-          <div class="rowlabel">RPE</div>
+          ${fieldKey ? `<div class="rowlabel">${esc(LOAD_MODE_LABEL[mode])}</div>` : ""}
           <div class="rowdivider"></div>
           <div class="rowlabel actual">Logged</div>
         </div>
@@ -2139,8 +2225,7 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
             <div class="weeklabel">Week ${i+1}</div>
             <input type="text" data-wf="sets" data-wi="${i}" value="${esc(wk.sets||"")}" placeholder="Sets">
             <input type="text" data-wf="reps" data-wi="${i}" value="${esc(wk.reps||"")}" placeholder="Reps">
-            <input type="text" data-wf="load" data-wi="${i}" value="${esc(wk.load||"")}" placeholder="Load">
-            <input type="text" data-wf="rpe" data-wi="${i}" value="${esc(wk.rpe||"")}" placeholder="RPE">
+            ${fieldKey ? `<input type="text" data-wf="${fieldKey}" data-wi="${i}" value="${esc(wk[fieldKey]||"")}" placeholder="${esc(LOAD_MODE_LABEL[mode])}">` : ""}
             <div class="rowdivider"></div>
             <div class="actualsummary" title="Logged per set by the client -- open Preview Client View to see or edit the full breakdown">${esc(summarizeLoggedSetsFor(program, refClientId, ex, i) || "—")}</div>
           </div>
@@ -2150,6 +2235,15 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
         <div class="exfield notes" style="flex:1 1 100%;"><label>Notes</label><input type="text" data-f="notes" value="${esc(ex.notes||"")}" placeholder="e.g. safety squat bar, tempo 3-1-1, cue: chest up"></div>
       </div>
     `;
+    const prescribeByWrap = row.querySelector(".loadmodefield");
+    const select = buildLoadModeSelect(ex, mode);
+    prescribeByWrap.appendChild(select);
+    select.addEventListener("change", () => {
+      ex.loadMode = select.value;
+      onChange();
+      renderEditor();
+    });
+
     row.querySelectorAll("[data-wf]").forEach(inp => {
       inp.addEventListener("input", () => {
         const i = parseInt(inp.dataset.wi, 10);
@@ -2235,7 +2329,7 @@ function buildDayEl(day){
           day.exercises = (day.exercises || []).concat([{
             id: rid(), exercise: m.exercise, group: m.group, sub: m.sub, plane: m.plane,
             pattern: m.pattern, joint: m.joint, primary: m.primary, secondary: m.secondary,
-            sets: "", reps: "", load: "", rpe: "", notes: "",
+            sets: "", reps: "", load: "", rpe: "", rir: "", loadMode: "", notes: "",
           }]);
           input.value = "";
           closeResults();
@@ -2271,7 +2365,7 @@ function buildPrintHTML(program, client){
     if(weeks > 1){
       for(let i=0; i<weeks; i++) h += `<th>Week ${i+1}</th>`;
     } else {
-      h += "<th>Sets</th><th>Reps</th><th>Load</th><th>RPE</th>";
+      h += "<th>Sets</th><th>Reps</th><th>Load</th>";
     }
     h += "<th>Notes</th></tr></thead><tbody>";
     (day.exercises || []).forEach(ex => {
@@ -2280,10 +2374,11 @@ function buildPrintHTML(program, client){
         const prog = Array.isArray(ex.progression) && ex.progression.length === weeks ? ex.progression : progressionOf(ex, weeks);
         for(let i=0; i<weeks; i++){
           const wk = prog[i] || {};
-          h += `<td>${esc(wk.sets||"")} × ${esc(wk.reps||"")}${wk.load ? ", " + esc(wk.load) : ""}${wk.rpe ? ", RPE " + esc(wk.rpe) : ""}</td>`;
+          const cell = loadIntensityCell(ex, wk);
+          h += `<td>${esc(wk.sets||"")} × ${esc(wk.reps||"")}${cell ? ", " + esc(cell) : ""}</td>`;
         }
       } else {
-        h += `<td>${esc(ex.sets||"")}</td><td>${esc(ex.reps||"")}</td><td>${esc(ex.load||"")}</td><td>${esc(ex.rpe||"")}</td>`;
+        h += `<td>${esc(ex.sets||"")}</td><td>${esc(ex.reps||"")}</td><td>${esc(loadIntensityCell(ex, ex))}</td>`;
       }
       h += `<td>${esc(ex.notes||"")}</td></tr>`;
     });
@@ -5261,7 +5356,7 @@ function buildClientExRow(ex, program, weeks, weekIndex, client){
   }
   const rxLabel = document.createElement("div");
   rxLabel.className = "cmrx";
-  rxLabel.textContent = `Target: ${wk.sets || "—"}×${wk.reps || "—"}${wk.load ? " @ " + wk.load : ""}${wk.rpe ? " (RPE " + wk.rpe + ")" : ""}`;
+  rxLabel.textContent = `Target: ${wk.sets || "—"}×${wk.reps || "—"}${loadIntensityText(ex, wk)}`;
   nowBox.appendChild(rxLabel);
 
   // Opt-in suggestion (see the program card's toggle) -- never shown for
@@ -5293,7 +5388,7 @@ function buildClientExRow(ex, program, weeks, weekIndex, client){
     const earlierWeeks = prog
       .map((w, idx2) => Object.assign({}, w, {weekNum: idx2 + 1, weekIdx: idx2}))
       .slice(0, i)
-      .filter(w => w.sets || w.reps || w.load || hasLoggedAnySetFor(program, clientId, ex, w.weekIdx) || getClientSwap(program, clientId, ex, w.weekIdx));
+      .filter(w => w.sets || w.reps || w.load || w.rir || w.rpe || hasLoggedAnySetFor(program, clientId, ex, w.weekIdx) || getClientSwap(program, clientId, ex, w.weekIdx));
     if(earlierWeeks.length){
       const hist = document.createElement("details");
       hist.className = "cmweekhistory";
@@ -5307,7 +5402,7 @@ function buildClientExRow(ex, program, weeks, weekIndex, client){
       earlierWeeks.slice().reverse().forEach(w => {
         const hr = document.createElement("div");
         hr.className = "cmweekhistoryrow";
-        const rx = `${w.sets || "—"}×${w.reps || "—"}${w.load ? " @ " + w.load : ""}`;
+        const rx = `${w.sets || "—"}×${w.reps || "—"}${loadIntensityText(ex, w)}`;
         const logged = summarizeLoggedSetsFor(program, clientId, ex, w.weekIdx);
         // The prescribed exercise never changes -- ex.exercise is always
         // what was programmed -- so a swap that week is called out as its
@@ -6644,9 +6739,17 @@ async function initCustomExercises(){
         try{ localStorage.removeItem("mlClientSession"); }catch(e){ /* ignore */ }
         applyAccessGate();
       }
-    } else {
-      tryRestoreClientSession();
     }
+    // else: not currently previewing a client. This whole subscription
+    // only ever runs inside the coach's own signed-in session (it needs a
+    // real db from getDb(), which only a signed-in coach ever gets), so
+    // there's no real client login to restore here -- that's handled once,
+    // correctly, in resolveOwnerStatus() instead. Calling
+    // tryRestoreClientSession() from here used to be the bug behind "every
+    // refresh opens a client preview instead of my homepage": if this
+    // browser had ever saved a client access code (e.g. from testing the
+    // client login screen), every reload would silently log back into that
+    // client and switch the whole app to client view.
   }, err => { /* clients just won't be pickable this visit */ });
 }
 
