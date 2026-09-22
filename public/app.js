@@ -32,6 +32,7 @@ let cmTodaysAgendaOpen = false;
 let cmTrainingPlanOpen = false;
 let cmRehabOpen = false;
 let cmNutritionOpen = false;
+let cmMessagesOpen = false;
 let cmWeeklyAgendaOpen = false; // the old full 7-day view, now tucked inside Today's Agenda as a secondary toggle
 // Shared between the Training Plan pill's per-day pills and the matching
 // day pill shown in Today's Agenda when that day is scheduled for today --
@@ -457,6 +458,7 @@ const tabBtns = {
   rehab: document.getElementById("tabbtn-rehab"),
   nutrition: document.getElementById("tabbtn-nutrition"),
   clients: document.getElementById("tabbtn-clients"),
+  messages: document.getElementById("tabbtn-messages"),
 };
 const tabPanels = {
   library: document.getElementById("tabpanel-library"),
@@ -464,6 +466,7 @@ const tabPanels = {
   rehab: document.getElementById("tabpanel-rehab"),
   nutrition: document.getElementById("tabpanel-nutrition"),
   clients: document.getElementById("tabpanel-clients"),
+  messages: document.getElementById("tabpanel-messages"),
 };
 const pageSub = document.getElementById("pagesub");
 const SUBS = {
@@ -472,11 +475,13 @@ const SUBS = {
   rehab: "Log what a physio has flagged for a client, then browse the library narrowed to that area to build a rehab plan.",
   nutrition: "Build calorie and macro targets from a client's stats, then lay out meals against them — link a client to pull their numbers in automatically.",
   clients: "One place per client — their info and goals alongside every program, rehab case and nutrition plan built for them.",
+  messages: "Chat with your clients right from the app — no phone number needed on either side.",
 };
 let builderInited = false;
 let rehabInited = false;
 let clientsTabInited = false;
 let nutritionInited = false;
+let messagesInited = false;
 
 function showTab(name){
   Object.keys(tabBtns).forEach(k => {
@@ -500,12 +505,17 @@ function showTab(name){
     clientsTabInited = true;
     initClientsTab();
   }
+  if(name === "messages" && !messagesInited){
+    messagesInited = true;
+    initMessages();
+  }
 }
 tabBtns.library.addEventListener("click", () => showTab("library"));
 tabBtns.builder.addEventListener("click", () => showTab("builder"));
 tabBtns.rehab.addEventListener("click", () => showTab("rehab"));
 tabBtns.nutrition.addEventListener("click", () => showTab("nutrition"));
 tabBtns.clients.addEventListener("click", () => showTab("clients"));
+tabBtns.messages.addEventListener("click", () => showTab("messages"));
 
 let dbPromise = null;
 function getDb(){
@@ -617,14 +627,44 @@ function genAccessCode(){
 // initNutrition(), which are the COACH's full-collection subscriptions and
 // must never run in a client's browser.
 async function loadClientPortalData(code){
-  const [progs, cases, nutrition] = await Promise.all([
+  const [progs, cases, nutrition, messages] = await Promise.all([
     window.__clientPortal.getProgramsForCode(code),
     window.__clientPortal.getRehabCasesForCode(code),
     window.__clientPortal.getNutritionPlansForCode(code),
+    window.__clientPortal.getMessagesForCode(code).catch(e => {
+      console.error("[loadClientPortalData] messages", e);
+      return []; // fail quiet -- don't block programs/rehab/nutrition loading over chat
+    }),
   ]);
   programsCache = progs;
   casesCache = cases;
   nutritionCache = nutrition;
+  messagesCache = messages;
+}
+
+// Real clients hold no Supabase session, so they can't get true realtime
+// updates the way the coach does (see firestoreShim's postgres_changes
+// subscription) -- instead, while their Messages pill is open (or briefly
+// after login, to catch a badge for an already-open app) this polls for new
+// messages every POLL_MS. Only ever one interval running at a time.
+const CLIENT_MSG_POLL_MS = 20000;
+let clientMsgPollTimer = null;
+function startClientMessagePolling(){
+  stopClientMessagePolling();
+  clientMsgPollTimer = setInterval(async () => {
+    if(!clientSession || !clientSession.accessCode) return;
+    try{
+      const fresh = await window.__clientPortal.getMessagesForCode(clientSession.accessCode);
+      messagesCache = fresh;
+      safeRenderClientModeView();
+    }catch(e){
+      console.error("[clientMsgPoll]", e);
+      // Network hiccup -- just try again on the next tick.
+    }
+  }, CLIENT_MSG_POLL_MS);
+}
+function stopClientMessagePolling(){
+  if(clientMsgPollTimer){ clearInterval(clientMsgPollTimer); clientMsgPollTimer = null; }
 }
 
 async function tryRestoreClientSession(){
@@ -641,6 +681,7 @@ async function tryRestoreClientSession(){
     clientSession = Object.assign({id: client.id, name: client.name}, client.doc);
     await loadClientPortalData(savedCode);
     applyAccessGate();
+    startClientMessagePolling();
   }catch(e){
     console.error("[tryRestoreClientSession]", e);
     // Network/server hiccup -- just fall through to the gate screen rather
@@ -664,6 +705,7 @@ async function tryClientLogin(codeRaw){
     clientSession = Object.assign({id: client.id, name: client.name}, client.doc);
     await loadClientPortalData(code);
     applyAccessGate();
+    startClientMessagePolling();
   }catch(e){
     console.error("[tryClientLogin]", e);
     errEl.textContent = "Something went wrong logging in — check your connection and try again.";
@@ -2278,6 +2320,14 @@ let currentNutritionId = null;
 let currentNutrition = null;
 let nutritionSaveTimer = null;
 
+// messagesCache is shared between the coach's own live subscription
+// (initMessages below, true realtime via firestoreShim) and a real client's
+// polled RPC results (loadClientPortalData / startClientMessagePolling) --
+// same pattern already used for programsCache/casesCache/nutritionCache.
+let messagesCol = null;
+let messagesCache = [];
+let currentMessageClientId = null;
+
 function allGroups(){ return [...new Set(DATA.map(r => r.group))].sort(); }
 
 async function initRehab(){
@@ -3149,6 +3199,7 @@ function initClientsTab(){
   if(!builderInited){ builderInited = true; initBuilder(); }
   if(!rehabInited){ rehabInited = true; initRehab(); }
   if(!nutritionInited){ nutritionInited = true; initNutrition(); }
+  if(!messagesInited){ messagesInited = true; initMessages(); }
   renderClientList();
   renderClientProfile();
 }
@@ -4348,8 +4399,20 @@ function renderClientModeView(){
     }
   }));
 
+  // Messages -- a direct line to the coach, right in the app. No unread
+  // count in the title unless there's something new, so the pill reads the
+  // same as every other one until it actually needs attention.
+  const myUnread = messagesCache.filter(m => m.clientId === client.id && m.sender === "coach" && !m.readByClient).length;
+  host.appendChild(buildCmPill(myUnread ? `Messages (${myUnread} new)` : "Messages", () => cmMessagesOpen, v => {
+    cmMessagesOpen = v;
+    if(v) markClientMessagesRead(client);
+  }, body => {
+    body.appendChild(buildClientMessagesPanel(client));
+  }));
+
   document.getElementById("cmLogoutBtn").addEventListener("click", () => {
     clientSession = null;
+    stopClientMessagePolling();
     try{ localStorage.removeItem("mlClientSession"); }catch(e){ /* ignore */ }
     applyAccessGate();
   });
@@ -5114,3 +5177,280 @@ initCustomExercises();
 window.retryDbInit = initCustomExercises;
 
 resolveOwnerStatus();
+
+/* ---------------------------------------------------------------------
+   Messages -- an in-app chat between coach and client, so neither side
+   ever needs the other's phone number.
+
+   The coach's side gets true realtime, same as every other tab, via the
+   firestoreShim subscription set up in initMessages(). A real client never
+   holds a Supabase session (see the client-login block above), so their
+   side instead polls window.__clientPortal.getMessagesForCode every
+   CLIENT_MSG_POLL_MS while they're logged in (see startClientMessagePolling
+   near loadClientPortalData). messagesCache is the single shared array
+   both paths write into, exactly like programsCache/casesCache/
+   nutritionCache already are.
+
+   buildMessageBubble/fmtMsgTime are shared by both the coach's own thread
+   view (renderMessageThread) and the client-facing pill
+   (buildClientMessagesPanel) so a message always looks the same regardless
+   of who's reading it -- only which side it's aligned to changes, via the
+   `mineSender` parameter.
+--------------------------------------------------------------------- */
+
+async function initMessages(){
+  db = await getDb();
+
+  if(!db){
+    flashNote("Saving isn't wired up in this preview, so messages you send here won't be kept — open the published page itself to message for real.", "dbnoteMessages");
+    renderMessageThreadList();
+    renderMessageThread();
+    return;
+  }
+
+  messagesCol = db.collection("messages");
+  messagesCol.orderBy("createdAt", "asc").limit(1000).onSnapshot(snap => {
+    messagesCache = snap.docs.map(d => Object.assign({id: d.id}, d.data()));
+    renderMessageThreadList();
+    renderMessageThread();
+    // Keeps the coach's own "preview as this client" view (which shares
+    // this same cache) showing new messages the instant they arrive too.
+    safeRenderClientModeView();
+  }, err => {
+    flashNote("Couldn't load messages (" + err.code + ").", "dbnoteMessages");
+  });
+}
+
+function renderMessageThreadList(){
+  const el = document.getElementById("messageThreadListEl");
+  if(!el) return;
+  el.innerHTML = "";
+  if(!clientsCache.length){
+    el.innerHTML = '<div class="emptyprogs">Add a client on THE SQUAD tab first, then you can message them here.</div>';
+    return;
+  }
+  const withLast = clientsCache.map(c => {
+    const msgs = messagesCache.filter(m => m.clientId === c.id);
+    const last = msgs.length ? msgs[msgs.length - 1] : null;
+    const unread = msgs.filter(m => m.sender === "client" && !m.readByCoach).length;
+    return {client: c, last, unread};
+  });
+  withLast.sort((a, b) => {
+    if(a.last && b.last) return new Date(b.last.createdAt) - new Date(a.last.createdAt);
+    if(a.last) return -1;
+    if(b.last) return 1;
+    return (a.client.name || "").localeCompare(b.client.name || "");
+  });
+  withLast.forEach(({client, last, unread}) => {
+    const div = document.createElement("div");
+    div.className = "progitem" + (client.id === currentMessageClientId ? " active" : "");
+    // Slice the raw text BEFORE escaping it, not after -- slicing an
+    // already-escaped string risks cutting an HTML entity like "&amp;" in
+    // half and leaving a broken, literal "&am" on the page.
+    const rawPreview = last ? (last.sender === "coach" ? "You: " : "") + (last.body || "") : "No messages yet";
+    const preview = esc(rawPreview.slice(0, 60));
+    div.innerHTML = `${esc(client.name || "Client")}${unread ? `<span class="msgunreadbadge">${unread}</span>` : ""}<span class="meta">${preview}</span>`;
+    div.onclick = () => {
+      currentMessageClientId = client.id;
+      renderMessageThreadList();
+      renderMessageThread();
+      markClientMessagesReadByCoach(client.id);
+    };
+    el.appendChild(div);
+  });
+}
+
+async function markClientMessagesReadByCoach(clientId){
+  if(!messagesCol) return;
+  const unread = messagesCache.filter(m => m.clientId === clientId && m.sender === "client" && !m.readByCoach);
+  for(const m of unread){
+    try{ await messagesCol.doc(m.id).update({readByCoach: true}); }catch(e){ /* badge just stays until the next successful attempt */ }
+  }
+}
+
+function renderMessageThread(){
+  const host = document.getElementById("messagesHost");
+  if(!host) return;
+  host.innerHTML = "";
+  if(!currentMessageClientId){
+    host.innerHTML = '<div class="emptyprogs">Pick a client on the left to see your conversation.</div>';
+    return;
+  }
+  const client = clientsCache.find(c => c.id === currentMessageClientId);
+  if(!client){
+    host.innerHTML = '<div class="emptyprogs">This client no longer exists.</div>';
+    return;
+  }
+
+  const wrap = document.createElement("div");
+  wrap.className = "msgthread";
+  const heading = document.createElement("h4");
+  heading.textContent = client.name || "Client";
+  wrap.appendChild(heading);
+
+  const scroller = document.createElement("div");
+  scroller.className = "msgscroller";
+  const msgs = messagesCache.filter(m => m.clientId === client.id);
+  if(!msgs.length){
+    const p = document.createElement("div");
+    p.className = "emptyprogs";
+    p.textContent = "No messages yet — say hello!";
+    scroller.appendChild(p);
+  } else {
+    msgs.forEach(m => scroller.appendChild(buildMessageBubble(m, "coach")));
+  }
+  wrap.appendChild(scroller);
+
+  const sendRow = document.createElement("div");
+  sendRow.className = "msgsendrow";
+  const textarea = document.createElement("textarea");
+  textarea.rows = 2;
+  textarea.maxLength = 4000;
+  textarea.placeholder = "Message " + (client.name || "your client") + "…";
+  const sendBtn = document.createElement("button");
+  sendBtn.type = "button";
+  sendBtn.textContent = "Send";
+  sendRow.appendChild(textarea);
+  sendRow.appendChild(sendBtn);
+  wrap.appendChild(sendRow);
+
+  host.appendChild(wrap);
+  scroller.scrollTop = scroller.scrollHeight;
+
+  const doSend = async () => {
+    const text = textarea.value.trim();
+    if(!text || !messagesCol) return;
+    sendBtn.disabled = true;
+    try{
+      await messagesCol.add({clientId: client.id, sender: "coach", body: text.slice(0, 4000), readByCoach: true, readByClient: false});
+      textarea.value = "";
+    }catch(e){
+      flashNote("Couldn't send that message (" + (e && e.code ? e.code : "error") + "). Try again.", "dbnoteMessages");
+    }finally{
+      sendBtn.disabled = false;
+      textarea.focus();
+    }
+  };
+  sendBtn.addEventListener("click", doSend);
+  textarea.addEventListener("keydown", e => {
+    if(e.key === "Enter" && !e.shiftKey){ e.preventDefault(); doSend(); }
+  });
+}
+
+// Shared by the coach's thread view and the client-facing pill --
+// `mineSender` is "coach" or "client" depending on who's looking at the
+// screen, so the same message always ends up on the "sent by me" side for
+// whoever is actually reading it.
+function buildMessageBubble(m, mineSender){
+  const row = document.createElement("div");
+  row.className = "msgbubblerow " + (m.sender === mineSender ? "mine" : "theirs");
+  const bubble = document.createElement("div");
+  bubble.className = "msgbubble";
+  bubble.textContent = m.body || "";
+  row.appendChild(bubble);
+  const time = document.createElement("div");
+  time.className = "msgtime";
+  time.textContent = fmtMsgTime(m.createdAt);
+  row.appendChild(time);
+  return row;
+}
+
+function fmtMsgTime(iso){
+  if(!iso) return "";
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return "";
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const timeStr = d.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"});
+  if(sameDay) return timeStr;
+  return d.toLocaleDateString([], {month: "short", day: "numeric"}) + " " + timeStr;
+}
+
+// -- Client-facing side. Shared as-is by a real client's own browser AND by
+// the coach's own "preview as this client" button -- see the messagesCol
+// vs. window.__clientPortal branch in each, same pattern scheduleClientSave
+// already uses for every other client-editable field. --
+
+async function markClientMessagesRead(client){
+  const unread = messagesCache.filter(m => m.clientId === client.id && m.sender === "coach" && !m.readByClient);
+  if(!unread.length) return;
+  try{
+    if(messagesCol){
+      for(const m of unread){
+        await messagesCol.doc(m.id).update({readByClient: true});
+      }
+    } else if(window.__clientPortal && client.accessCode){
+      await window.__clientPortal.markCoachMessagesReadForCode(client.accessCode);
+      unread.forEach(m => { m.readByClient = true; });
+    }
+  }catch(e){
+    console.error("[markClientMessagesRead]", e);
+    // Not fatal -- the unread badge just won't clear until the next successful attempt.
+  }
+}
+
+function buildClientMessagesPanel(client){
+  const wrap = document.createElement("div");
+
+  const scroller = document.createElement("div");
+  scroller.className = "msgscroller";
+  const msgs = messagesCache.filter(m => m.clientId === client.id);
+  if(!msgs.length){
+    const p = document.createElement("div");
+    p.className = "cmempty";
+    p.textContent = "No messages yet — send your coach a hello!";
+    scroller.appendChild(p);
+  } else {
+    msgs.forEach(m => scroller.appendChild(buildMessageBubble(m, "client")));
+  }
+  wrap.appendChild(scroller);
+
+  const sendRow = document.createElement("div");
+  sendRow.className = "msgsendrow";
+  const textarea = document.createElement("textarea");
+  textarea.rows = 2;
+  textarea.maxLength = 4000;
+  textarea.placeholder = "Message your coach…";
+  const sendBtn = document.createElement("button");
+  sendBtn.type = "button";
+  sendBtn.textContent = "Send";
+  sendRow.appendChild(textarea);
+  sendRow.appendChild(sendBtn);
+  wrap.appendChild(sendRow);
+
+  // renderClientModeView rebuilds this from scratch every call, so start
+  // scrolled to the bottom every time, same as the coach's own thread view.
+  setTimeout(() => { scroller.scrollTop = scroller.scrollHeight; }, 0);
+
+  const doSend = async () => {
+    const text = textarea.value.trim();
+    if(!text) return;
+    sendBtn.disabled = true;
+    try{
+      if(messagesCol){
+        // The coach's own browser, previewing this client -- goes through
+        // the same db shim every other pill saves through in preview.
+        await messagesCol.add({clientId: client.id, sender: "client", body: text.slice(0, 4000), readByCoach: false, readByClient: true});
+        textarea.value = "";
+      } else if(window.__clientPortal && client.accessCode){
+        // A real client's browser -- no Supabase session, so this goes
+        // through the access-code-checked RPC instead.
+        const sent = await window.__clientPortal.sendMessageForCode(client.accessCode, text);
+        if(sent) messagesCache = messagesCache.concat([sent]);
+        renderClientModeView(); // no realtime subscription on this side -- show it immediately
+        return;
+      }
+    }catch(e){
+      console.error("[buildClientMessagesPanel/send]", e);
+      flashNote("Couldn't send that message. Check your connection and try again.", "dbnoteMessages");
+    }finally{
+      sendBtn.disabled = false;
+    }
+  };
+  sendBtn.addEventListener("click", doSend);
+  textarea.addEventListener("keydown", e => {
+    if(e.key === "Enter" && !e.shiftKey){ e.preventDefault(); doSend(); }
+  });
+
+  return wrap;
+}
