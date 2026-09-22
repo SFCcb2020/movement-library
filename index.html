@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>STRONG FRIENDS CLUB</title>
+<title>Strong Friends Club</title>
 <meta name="description" content="Coaching dashboard, exercise library, and client portal for Strong Friends Club.">
 
 <!-- PWA: makes the app installable to a phone's home screen -->
@@ -20,17 +20,76 @@
 <body>
 
 <div class="wrap">
-  <h1>STRONG FRIENDS CLUB</h1>
+  <h1>Strong Friends Club</h1>
 
   <div id="gateLoading" class="gateloading" hidden>Loading…</div>
 
   <div id="gateScreen" class="gatescreen" hidden>
-    <div class="gatecard">
+    <div class="launchhero">
+      <p>Coaching programs, rehab plans, nutrition and check-ins — all in one place.</p>
+    </div>
+
+    <div class="launchgrid" id="launchGrid">
+      <div class="launchcard">
+        <h3>Already a member?</h3>
+        <p>Enter the access code your coach gave you.</p>
+        <button type="button" class="launchbtn launchbtn-primary" data-launch-open="signInPanel">Sign In</button>
+      </div>
+      <div class="launchcard">
+        <h3>New here?</h3>
+        <p>Join Strong Friends Club and get instant access.</p>
+        <button type="button" class="launchbtn launchbtn-primary" data-launch-open="joinPanel">Join</button>
+      </div>
+      <div class="launchcard">
+        <h3>Not sure yet?</h3>
+        <p>Tell me about your goals and I'll be in touch.</p>
+        <button type="button" class="launchbtn" data-launch-open="enquirePanel">Enquire</button>
+      </div>
+      <div class="launchcard launchcard-coach">
+        <h3>Coach</h3>
+        <p>Sign in to your dashboard.</p>
+        <button type="button" class="launchbtn launchbtn-ghost" data-launch-open="coachLoginPanel">Coach Sign In</button>
+      </div>
+    </div>
+
+    <div class="gatecard launchpanel" id="signInPanel" hidden>
       <h2>Client Access</h2>
       <p>Enter the access code your coach gave you to see your program, rehab plan, goals and tasks.</p>
       <input type="text" class="gatecode" id="gateCodeInput" placeholder="ABC123" maxlength="8" autocomplete="off">
       <button class="gatesubmit" id="gateSubmitBtn" type="button">Log In</button>
       <div class="gateerror" id="gateError"></div>
+      <button type="button" class="launchback" data-launch-back>← Back</button>
+    </div>
+
+    <div class="gatecard launchpanel" id="joinPanel" hidden>
+      <h2>Join Strong Friends Club</h2>
+      <p>You'll be taken to a secure payment page. Once your payment goes through, your personal access code is emailed to you automatically — usually within a minute or two — and you're all set to sign in above.</p>
+      <a class="gatesubmit joinlinkbtn" id="joinLinkBtn" href="#" target="_blank" rel="noopener noreferrer">Continue to Payment</a>
+      <div class="gateerror" id="joinError" hidden>This isn't set up yet — check back soon.</div>
+      <button type="button" class="launchback" data-launch-back>← Back</button>
+    </div>
+
+    <div class="gatecard launchpanel enquirepanel" id="enquirePanel" hidden>
+      <h2>Tell me about your goals</h2>
+      <p>A few quick questions so I can get back to you with the right next step.</p>
+      <form id="enquireForm">
+        <input type="text" class="enquirefield" id="enquireName" placeholder="Name" autocomplete="name" required>
+        <input type="email" class="enquirefield" id="enquireEmail" placeholder="Email" autocomplete="email" required>
+        <input type="tel" class="enquirefield" id="enquirePhone" placeholder="Phone (optional)" autocomplete="tel">
+        <textarea class="enquirefield enquiretextarea" id="enquireGoals" placeholder="What are you hoping to work on or achieve?" rows="3"></textarea>
+        <textarea class="enquirefield enquiretextarea" id="enquireExperience" placeholder="What's your current training experience?" rows="3"></textarea>
+        <button type="submit" class="gatesubmit" id="enquireSubmitBtn">Submit</button>
+      </form>
+      <div class="gateerror" id="enquireStatus"></div>
+      <button type="button" class="launchback" data-launch-back>← Back</button>
+    </div>
+
+    <div class="gatecard launchpanel" id="coachLoginPanel" hidden>
+      <h2>Coach Sign In</h2>
+      <input type="password" id="coachCodeInput" class="gatecode" placeholder="Access code" maxlength="16" autocomplete="current-password">
+      <button type="button" id="coachPasswordSubmitBtn" class="gatesubmit">Sign in</button>
+      <div class="gateerror" id="coachLoginStatus"></div>
+      <button type="button" class="launchback" data-launch-back>← Back</button>
     </div>
   </div>
 
@@ -40,12 +99,13 @@
   <p class="sub" id="pagesub">Pick a muscle group or training quality, then narrow by sub-region, plane of movement, or pattern — the exercises and their details fill in as you go.</p>
 
   <div class="tabbar">
-    <button class="tabbtn active" id="tabbtn-library" type="button">Movement Library</button>
+    <button class="tabbtn active" id="tabbtn-library" type="button">Exercise Library</button>
     <button class="tabbtn" id="tabbtn-builder" type="button">Program Builder</button>
     <button class="tabbtn" id="tabbtn-rehab" type="button">Rehab</button>
     <button class="tabbtn" id="tabbtn-nutrition" type="button">Nutrition</button>
     <button class="tabbtn" id="tabbtn-clients" type="button">THE SQUAD</button>
     <button class="tabbtn" id="tabbtn-messages" type="button">Messages</button>
+    <button class="tabbtn" id="tabbtn-enquiries" type="button">Enquiries</button>
   </div>
 
   <div class="tabpanel active" id="tabpanel-library">
@@ -126,6 +186,17 @@
         <div id="messageThreadListEl"></div>
       </div>
       <div id="messagesHost"></div>
+    </div>
+  </div>
+
+  <div class="tabpanel" id="tabpanel-enquiries">
+    <div id="dbnoteEnquiries" class="dbnote" hidden></div>
+    <div class="builder-layout">
+      <div class="proglist">
+        <h2>Enquiries</h2>
+        <div id="enquiryListEl"></div>
+      </div>
+      <div id="enquiryHost"></div>
     </div>
   </div>
 
