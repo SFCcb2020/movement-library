@@ -83,6 +83,20 @@ export async function getProgramsForCode(code) {
   return callForCode("get_programs_for_code", code);
 }
 
+// Persists a client's own logged sets (reps/weight per set, for progressive
+// overload carry-over) back to their program. Previously a client could
+// only READ their program -- whatever they logged lived in the browser tab
+// only and vanished on reload. Scoped server-side to just the `days` tree,
+// and only for a program that's confirmed to belong to this access code.
+export async function saveProgramActualsForCode(code, programId, days) {
+  const { error } = await supabase.rpc("update_program_actuals_for_code", {
+    p_code: (code || "").trim().toUpperCase(),
+    p_program_id: programId,
+    p_days: days,
+  });
+  if (error) throw error;
+}
+
 export async function getRehabCasesForCode(code) {
   return callForCode("get_rehab_cases_for_code", code);
 }
