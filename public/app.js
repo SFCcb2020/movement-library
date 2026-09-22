@@ -820,6 +820,11 @@ function ensureRehabInited(){
 }
 
 function showTab(name){
+  // Leaving Builder/Rehab for another tab -- flush any edit still sitting
+  // in its 600ms debounce (a typed rest time, a just-made swap, etc.)
+  // rather than trusting a background timer to survive the tab switch.
+  if(name !== "builder") flushProgramSave();
+  if(name !== "rehab") flushCaseSave();
   Object.keys(tabBtns).forEach(k => {
     tabBtns[k].classList.toggle("active", k === name);
     tabPanels[k].classList.toggle("active", k === name);
@@ -875,6 +880,21 @@ tabBtns.clients.addEventListener("click", () => showTab("clients"));
 tabBtns.messages.addEventListener("click", () => showTab("messages"));
 tabBtns.enquiries.addEventListener("click", () => showTab("enquiries"));
 tabBtns.notifications.addEventListener("click", () => showTab("notifications"));
+
+// A second, broader safety net alongside showTab's own flush above: covers
+// switching to a different BROWSER tab, backgrounding the whole app on a
+// phone, or closing/reloading it outright -- all cases where the coach
+// never went through showTab() at all, so that flush alone wouldn't run.
+// visibilitychange fires reliably the moment the page is hidden (including
+// on mobile, before the OS gets a chance to freeze its timers); pagehide
+// is the backstop for an outright close/navigate-away, which mobile
+// Safari in particular won't always fire beforeunload for.
+function flushAllPendingSaves(){
+  flushProgramSave();
+  flushCaseSave();
+}
+document.addEventListener("visibilitychange", () => { if(document.hidden) flushAllPendingSaves(); });
+window.addEventListener("pagehide", flushAllPendingSaves);
 
 let dbPromise = null;
 function getDb(){
@@ -1353,34 +1373,57 @@ document.getElementById("autoBuildBtn").addEventListener("click", () => {
   renderEditor();
 });
 
+// The actual write, pulled out of the setTimeout below so it can also be
+// run immediately by flushProgramSave() -- see that function for why a
+// pure debounce-timer save isn't reliable enough on its own (a backgrounded
+// mobile tab can simply never get around to running a pending timer, which
+// is exactly what "I typed a rest time / swapped an exercise, then came
+// back and it was gone" looks like from the coach's side).
+async function performProgramSave(){
+  if(!currentProgram) return;
+  // actualsByClient is deliberately left out of this payload -- the coach
+  // never edits it herself (it's a read-only "Logged" summary in her
+  // builder), and update_program_doc's merge is a shallow `doc || patch`,
+  // so leaving it out means her save can never clobber a client's own
+  // just-logged set with a stale in-memory copy from when she opened this
+  // program. Clients write it themselves via save_program_actuals_for_code.
+  const payload = {name: currentProgram.name, days: currentProgram.days, weeks: currentProgram.weeks||1, goal: currentProgram.goal||"", coachNotes: currentProgram.coachNotes||"", liftStats: currentProgram.liftStats||[], weightUnit: currentProgram.weightUnit||"kg", clientIds: programClientIds(currentProgram), prescribePercent: currentProgram.prescribePercent !== false, updatedAt: new Date().toISOString()};
+  const badgeEl = document.getElementById("saveBadge");
+  if(programsCol && !String(currentId).startsWith("local-")){
+    try{
+      await programsCol.doc(currentId).update(payload);
+      if(badgeEl) badgeEl.textContent = "Saved";
+    }catch(e){
+      if(badgeEl) badgeEl.textContent = "Not saved (" + e.code + ")";
+    }
+  } else {
+    const idx = programsCache.findIndex(p => p.id === currentId);
+    if(idx > -1) programsCache[idx] = Object.assign({}, programsCache[idx], payload);
+    if(badgeEl) badgeEl.textContent = "Saved (this session only)";
+    renderProgramList();
+  }
+}
+
 function scheduleSave(){
   const badge = document.getElementById("saveBadge");
   if(badge) badge.textContent = "Saving…";
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
-    if(!currentProgram) return;
-    // actualsByClient is deliberately left out of this payload -- the coach
-    // never edits it herself (it's a read-only "Logged" summary in her
-    // builder), and update_program_doc's merge is a shallow `doc || patch`,
-    // so leaving it out means her save can never clobber a client's own
-    // just-logged set with a stale in-memory copy from when she opened this
-    // program. Clients write it themselves via save_program_actuals_for_code.
-    const payload = {name: currentProgram.name, days: currentProgram.days, weeks: currentProgram.weeks||1, goal: currentProgram.goal||"", coachNotes: currentProgram.coachNotes||"", liftStats: currentProgram.liftStats||[], weightUnit: currentProgram.weightUnit||"kg", clientIds: programClientIds(currentProgram), prescribePercent: currentProgram.prescribePercent !== false, updatedAt: new Date().toISOString()};
-    const badgeEl = document.getElementById("saveBadge");
-    if(programsCol && !String(currentId).startsWith("local-")){
-      try{
-        await programsCol.doc(currentId).update(payload);
-        if(badgeEl) badgeEl.textContent = "Saved";
-      }catch(e){
-        if(badgeEl) badgeEl.textContent = "Not saved (" + e.code + ")";
-      }
-    } else {
-      const idx = programsCache.findIndex(p => p.id === currentId);
-      if(idx > -1) programsCache[idx] = Object.assign({}, programsCache[idx], payload);
-      if(badgeEl) badgeEl.textContent = "Saved (this session only)";
-      renderProgramList();
-    }
-  }, 600);
+  saveTimer = setTimeout(() => { saveTimer = null; performProgramSave(); }, 600);
+}
+
+// Safety net for the 600ms debounce above: if there's still a pending save
+// waiting on that timer, run it right now instead of waiting the timer out.
+// Hooked up to (a) switching away from the Builder tab to any other tab in
+// the app, and (b) the browser/PWA tab actually being hidden or unloaded --
+// both moments where a still-pending setTimeout might otherwise never get
+// the chance to fire (mobile browsers routinely freeze a backgrounded
+// tab's timers, and some just discard the page's JS state altogether).
+function flushProgramSave(){
+  if(saveTimer){
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    performProgramSave();
+  }
 }
 
 async function duplicateProgram(){
@@ -2253,6 +2296,28 @@ function wireApplyProgressionBtn(btn, onApply){
   });
 }
 
+// Rest is always STORED as ex.restSeconds (a plain number of seconds --
+// that's what the client's rest timer and the printed program already
+// expect), but typed and shown in the Rest field as minutes:seconds so a
+// coach can write "1:30" instead of doing the math to "90" herself.
+// Accepts a bare number too (parsed as seconds outright), so anything
+// already saved from before this field existed keeps working unchanged.
+function parseRestInput(str){
+  const s = String(str||"").trim();
+  if(!s) return "";
+  const m = s.match(/^(\d+):([0-5]?\d)$/);
+  if(m) return String(parseInt(m[1], 10) * 60 + parseInt(m[2], 10));
+  const n = parseInt(s, 10);
+  return Number.isFinite(n) ? String(n) : "";
+}
+// The inverse, for displaying a saved restSeconds back in the field --
+// blank (not "0:00") when there's nothing set yet, so a fresh exercise's
+// Rest field just shows its placeholder.
+function formatRestInput(totalSeconds){
+  const s = parseInt(totalSeconds, 10);
+  return s > 0 ? fmtRestClock(s) : "";
+}
+
 /** Program Builder's exercise row: like buildExRow, but week-aware. With a
  *  single-week program it looks identical to the plain sets/reps/load row;
  *  with multiple weeks it shows one column per week. */
@@ -2334,7 +2399,7 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
       <div class="exrow-fields">
         <div class="exfield narrow"><label>Sets</label><input type="text" data-f="sets" value="${esc(ex.sets||"")}" placeholder="4"></div>
         <div class="exfield narrow"><label>Reps</label><input type="text" data-f="reps" value="${esc(ex.reps||"")}" placeholder="8"></div>
-        <div class="exfield narrow"><label>Rest (sec)</label><input type="text" inputmode="numeric" data-f="restSeconds" value="${esc(ex.restSeconds||"")}" placeholder="90"></div>
+        <div class="exfield narrow"><label>Rest (min:sec)</label><input type="text" inputmode="text" data-restf="restSeconds" value="${esc(formatRestInput(ex.restSeconds))}" placeholder="1:30"></div>
         <div class="exfield narrow loadmodefield"><label>${prescribeByLabel}</label></div>
         ${fieldKey ? `<div class="exfield narrow"><label>${esc(LOAD_MODE_LABEL[mode])}</label><input type="text" data-rxf="${fieldKey}" value="${esc(rxValue)}" placeholder="${esc(LOAD_MODE_PLACEHOLDER[mode])}"></div>` : `<div class="exfield narrow loadmodeblank"><label>&nbsp;</label><span class="loadmodeblanknote">No reference — client's own judgement</span></div>`}
         <div class="exfield notes"><label>Notes</label><input type="text" data-f="notes" value="${esc(ex.notes||"")}" placeholder="e.g. safety squat bar, tempo 3-1-1, cue: chest up"></div>
@@ -2357,10 +2422,16 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
       onChange();
     });
 
+    const restInput = row.querySelector("input[data-restf]");
+    if(restInput) restInput.addEventListener("input", () => {
+      ex.restSeconds = parseRestInput(restInput.value);
+      onChange();
+    });
+
     row.querySelectorAll("input[data-f]").forEach(inp => {
       inp.addEventListener("input", () => {
         ex[inp.dataset.f] = inp.value;
-        if(Array.isArray(ex.progression) && ex.progression[0] && inp.dataset.f !== "notes" && inp.dataset.f !== "restSeconds"){
+        if(Array.isArray(ex.progression) && ex.progression[0] && inp.dataset.f !== "notes"){
           ex.progression[0][inp.dataset.f] = inp.value;
         }
         onChange();
@@ -2403,7 +2474,7 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
         `).join("")}
       </div>
       <div class="exrow-fields">
-        <div class="exfield narrow"><label>Rest (sec)</label><input type="text" inputmode="numeric" data-f="restSeconds" value="${esc(ex.restSeconds||"")}" placeholder="90"></div>
+        <div class="exfield narrow"><label>Rest (min:sec)</label><input type="text" inputmode="text" data-restf="restSeconds" value="${esc(formatRestInput(ex.restSeconds))}" placeholder="1:30"></div>
         ${fieldKey && activeRx ? `<div class="exfield narrow"><label>${esc(LOAD_MODE_LABEL[mode])} (${esc((refClient && refClient.name) || "this client")})</label><input type="text" data-rxf="${fieldKey}" value="${esc(resolvedIntensityValue(ex, fieldKey, refClientId, ex))}" placeholder="${esc(LOAD_MODE_PLACEHOLDER[mode])}"></div>` : ""}
         <div class="exfield notes" style="flex:1 1 100%;"><label>Notes</label><input type="text" data-f="notes" value="${esc(ex.notes||"")}" placeholder="e.g. safety squat bar, tempo 3-1-1, cue: chest up"></div>
       </div>
@@ -2432,7 +2503,7 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
       });
     });
     row.querySelector('[data-f="notes"]').addEventListener("input", e => { ex.notes = e.target.value; onChange(); });
-    row.querySelector('[data-f="restSeconds"]').addEventListener("input", e => { ex.restSeconds = e.target.value; onChange(); });
+    row.querySelector('input[data-restf]').addEventListener("input", e => { ex.restSeconds = parseRestInput(e.target.value); onChange(); });
   }
 
   row.querySelector(".exremove").addEventListener("click", onRemove);
@@ -2503,17 +2574,34 @@ function buildLinkToggle(ex, onToggle){
   return wrap;
 }
 
+// Which days are collapsed in the Program Builder editor -- purely a UI
+// convenience (never saved to the program itself), so a plain Set keyed by
+// day id is enough. renderEditor() rebuilds every day's element from
+// scratch on every edit, same as everywhere else in this file, so this Set
+// is what makes a day's collapsed state survive that rebuild -- the same
+// pattern already used for cmWeekHistoryOpenIds/cmTrainingDayPillOpenIds.
+let builderCollapsedDayIds = new Set();
+
 function buildDayEl(day){
   const box = document.createElement("div");
   box.className = "day";
+  const collapsed = builderCollapsedDayIds.has(day.id);
+  box.classList.toggle("day-collapsed", collapsed);
 
   const head = document.createElement("div");
   head.className = "day-head";
+  const exCount = (day.exercises || []).length;
   head.innerHTML = `
+    <button class="daycollapsebtn" type="button" title="${collapsed ? "Expand this day" : "Collapse this day"}" aria-expanded="${!collapsed}">${collapsed ? "▸" : "▾"}</button>
     <input class="dayinput" value="${esc(day.label||"")}" placeholder="Day label">
+    ${collapsed ? `<span class="daycollapsedmeta">${esc(fmtCount(exCount, "exercise"))}</span>` : ""}
     <button class="daydupe" title="Duplicate this day" type="button">⧉</button>
     <button class="exremove" title="Remove day" type="button">✕</button>
   `;
+  head.querySelector(".daycollapsebtn").addEventListener("click", () => {
+    if(collapsed) builderCollapsedDayIds.delete(day.id); else builderCollapsedDayIds.add(day.id);
+    renderEditor();
+  });
   head.querySelector(".dayinput").addEventListener("input", e => { day.label = e.target.value; scheduleSave(); });
   head.querySelector(".daydupe").addEventListener("click", () => {
     const copy = {
@@ -2527,9 +2615,16 @@ function buildDayEl(day){
   });
   head.querySelector(".exremove").addEventListener("click", () => {
     currentProgram.days = currentProgram.days.filter(d => d.id !== day.id);
+    builderCollapsedDayIds.delete(day.id);
     renderEditor(); scheduleSave();
   });
   box.appendChild(head);
+
+  if(collapsed) return box;
+
+  const body = document.createElement("div");
+  body.className = "day-body";
+  box.appendChild(body);
 
   // Work out which exercises fall into a superset/circuit together (see
   // computeExerciseGroups above) so the first row of each group gets a
@@ -2556,7 +2651,7 @@ function buildDayEl(day){
         renderEditor();
         scheduleSave();
       });
-      box.appendChild(label);
+      body.appendChild(label);
     }
     const row = buildProgExRow(
       ex, currentProgram,
@@ -2571,8 +2666,8 @@ function buildDayEl(day){
       }
     );
     if(info && info.kind) row.classList.add("exrow-grouped");
-    box.appendChild(row);
-    if(idx < exs.length - 1) box.appendChild(buildLinkToggle(ex));
+    body.appendChild(row);
+    if(idx < exs.length - 1) body.appendChild(buildLinkToggle(ex));
   });
 
   const addBox = document.createElement("div");
@@ -2623,7 +2718,7 @@ function buildDayEl(day){
     addBox.appendChild(resultsEl);
   });
   input.addEventListener("blur", () => setTimeout(closeResults, 150));
-  box.appendChild(addBox);
+  body.appendChild(addBox);
 
   return box;
 }
@@ -2672,7 +2767,7 @@ function buildPrintHTML(program, client){
       } else {
         h += `<td>${esc(ex.sets||"")}</td><td>${esc(ex.reps||"")}</td><td>${esc(loadIntensityCell(ex, ex, client && client.id))}</td>`;
       }
-      h += `<td>${esc(ex.restSeconds ? ex.restSeconds + "s" : "")}</td><td>${esc(ex.notes||"")}</td></tr>`;
+      h += `<td>${esc(formatRestInput(ex.restSeconds))}</td><td>${esc(ex.notes||"")}</td></tr>`;
     });
     h += "</tbody></table>";
   });
@@ -3898,32 +3993,45 @@ document.getElementById("newCaseBtn").addEventListener("click", async () => {
   }
 });
 
+// See performProgramSave/flushProgramSave for why this is split out the
+// same way -- a debounced save sitting only in a setTimeout can get
+// silently stranded if the coach leaves this tab before it fires.
+async function performCaseSave(){
+  if(!currentCase) return;
+  const payload = {
+    clientName: currentCase.clientName, clientId: currentCase.clientId || null, diagnosis: currentCase.diagnosis,
+    areaGroups: currentCase.areaGroups, areaSubs: currentCase.areaSubs,
+    plan: currentCase.plan, updatedAt: new Date().toISOString(),
+  };
+  const badgeEl = document.getElementById("caseSaveBadge");
+  if(rehabCol && !String(currentCaseId).startsWith("local-")){
+    try{
+      await rehabCol.doc(currentCaseId).update(payload);
+      if(badgeEl) badgeEl.textContent = "Saved";
+    }catch(e){
+      if(badgeEl) badgeEl.textContent = "Not saved (" + e.code + ")";
+    }
+  } else {
+    const idx = casesCache.findIndex(c => c.id === currentCaseId);
+    if(idx > -1) casesCache[idx] = Object.assign({}, casesCache[idx], payload);
+    if(badgeEl) badgeEl.textContent = "Saved (this session only)";
+    renderCaseList();
+  }
+}
+
 function scheduleCaseSave(){
   const badge = document.getElementById("caseSaveBadge");
   if(badge) badge.textContent = "Saving…";
   clearTimeout(caseSaveTimer);
-  caseSaveTimer = setTimeout(async () => {
-    if(!currentCase) return;
-    const payload = {
-      clientName: currentCase.clientName, clientId: currentCase.clientId || null, diagnosis: currentCase.diagnosis,
-      areaGroups: currentCase.areaGroups, areaSubs: currentCase.areaSubs,
-      plan: currentCase.plan, updatedAt: new Date().toISOString(),
-    };
-    const badgeEl = document.getElementById("caseSaveBadge");
-    if(rehabCol && !String(currentCaseId).startsWith("local-")){
-      try{
-        await rehabCol.doc(currentCaseId).update(payload);
-        if(badgeEl) badgeEl.textContent = "Saved";
-      }catch(e){
-        if(badgeEl) badgeEl.textContent = "Not saved (" + e.code + ")";
-      }
-    } else {
-      const idx = casesCache.findIndex(c => c.id === currentCaseId);
-      if(idx > -1) casesCache[idx] = Object.assign({}, casesCache[idx], payload);
-      if(badgeEl) badgeEl.textContent = "Saved (this session only)";
-      renderCaseList();
-    }
-  }, 600);
+  caseSaveTimer = setTimeout(() => { caseSaveTimer = null; performCaseSave(); }, 600);
+}
+
+function flushCaseSave(){
+  if(caseSaveTimer){
+    clearTimeout(caseSaveTimer);
+    caseSaveTimer = null;
+    performCaseSave();
+  }
 }
 
 async function duplicateCase(){
