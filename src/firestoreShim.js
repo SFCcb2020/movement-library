@@ -64,6 +64,19 @@ const TABLE_CONFIG = {
     ],
   },
   customExercises: { table: "custom_exercises", updateRpc: null, idParam: null, mirrors: [] },
+  messages: {
+    table: "messages",
+    updateRpc: "update_message_doc",
+    idParam: "p_message_id",
+    // createdAt is mirrored from the real (DB-generated, clock-skew-proof)
+    // created_at column rather than something the app sets itself, so it
+    // lines up exactly with what the client-side RPCs already return for
+    // messages a client sends (see clientPortal.js's getMessagesForCode).
+    mirrors: [
+      { appField: "clientId", column: "client_id" },
+      { appField: "createdAt", column: "created_at" },
+    ],
+  },
 };
 
 function rowToDoc(config, row) {
