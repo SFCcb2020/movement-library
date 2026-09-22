@@ -40,16 +40,17 @@
         <p>Join Strong Friends Club and get instant access.</p>
         <button type="button" class="launchbtn launchbtn-primary" data-launch-open="joinPanel">Join</button>
       </div>
-      <div class="launchcard launchcard-coach">
-        <h3>Coach</h3>
-        <p>Sign in to your dashboard.</p>
-        <button type="button" class="launchbtn launchbtn-primary" data-launch-open="coachLoginPanel">Coach Sign In</button>
-      </div>
       <div class="launchcard">
         <h3>Not sure yet?</h3>
         <p>Tell me about your goals and I'll be in touch.</p>
         <button type="button" class="launchbtn launchbtn-peach" data-launch-open="enquirePanel">Enquire</button>
       </div>
+      <!-- Coach's own entry point -- unlike the other three cards, this one
+           IS the button: the whole card is a single clickable element (a
+           real <button>, not a div wrapping one) so there's no separate
+           heading/description to keep in sync with it. Styled full pink via
+           .launchcard-coach in app.css. -->
+      <button type="button" class="launchcard launchcard-coach" data-launch-open="coachLoginPanel">Coach Sign In</button>
     </div>
 
     <div class="gatecard launchpanel" id="signInPanel" hidden>
