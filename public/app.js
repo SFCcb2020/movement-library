@@ -1894,6 +1894,10 @@ function scheduleClientSave(client){
       // unsaved-in-truth change reverted -- "shows logged, then disappears."
       weeklyGoals: client.weeklyGoals || [], agendaNotes: client.agendaNotes || {},
       trainingSchedule: client.trainingSchedule || {}, weightLog: client.weightLog || [],
+      // Whether the coach has tucked this client's message thread into the
+      // Archived section -- coach-only bookkeeping, never read or shown on
+      // the client's own side.
+      messagesArchived: !!client.messagesArchived,
       updatedAt: new Date().toISOString(),
     };
     try{
@@ -2383,6 +2387,8 @@ let nutritionSaveTimer = null;
 let messagesCol = null;
 let messagesCache = [];
 let currentMessageClientId = null;
+let msgArchiveOpen = false; // whether the "Archived" section of the thread list is expanded
+let messagesDbInitDone = false; // guards initMessages() against a duplicate realtime subscription on retry
 
 function allGroups(){ return [...new Set(DATA.map(r => r.group))].sort(); }
 
@@ -5301,10 +5307,19 @@ async function initCustomExercises(){
 }
 
 initCustomExercises();
+// Messages gets initialized eagerly here too (not just lazily on first
+// visiting the Messages or THE SQUAD tab) so the unread badge on the
+// Messages tab itself is already accurate the moment the coach's dashboard
+// loads -- a real "you have a message" notification, not one that only
+// appears once she happens to click into a tab that loads it.
+messagesInited = true;
+initMessages();
 // Called from src/main.js's watchAuthState every time the coach's session
-// changes (sign-in, sign-out, a code change) -- a no-op via the dbInitDone
-// guard above once it has actually succeeded once.
-window.retryDbInit = initCustomExercises;
+// changes (sign-in, sign-out, a code change) -- each is a no-op once it has
+// actually succeeded once (dbInitDone / messagesDbInitDone guard above),
+// so this safely covers the case where either was called before the
+// coach's session had actually resolved yet.
+window.retryDbInit = () => { initCustomExercises(); initMessages(); };
 
 resolveOwnerStatus();
 
@@ -5328,7 +5343,46 @@ resolveOwnerStatus();
    `mineSender` parameter.
 --------------------------------------------------------------------- */
 
+// A client tucked into Archived shouldn't stay hidden if they actually need
+// a reply -- if anything of theirs is still unread, bring them back to the
+// active list automatically rather than risk it going unnoticed. Runs on
+// every incoming snapshot, so a message that arrives after archiving (the
+// whole point of archiving) surfaces the thread again right away, and it
+// self-heals the rare case of archiving a thread with unread still pending.
+function autoUnarchiveClientsWithUnread(){
+  clientsCache.forEach(c => {
+    if(!c.messagesArchived) return;
+    const hasUnread = messagesCache.some(m => m.clientId === c.id && m.sender === "client" && !m.readByCoach);
+    if(hasUnread){
+      c.messagesArchived = false;
+      scheduleClientSave(c);
+    }
+  });
+}
+
+// The little count badge next to the "Messages" tab itself -- the coach's
+// equivalent of the "(N new)" a client sees on their own Messages pill.
+// Independent of which tab is currently open, so it stays accurate whether
+// she's looking at Messages right now or not.
+function updateMessagesTabBadge(){
+  const btn = tabBtns.messages;
+  if(!btn) return;
+  const count = messagesCache.filter(m => m.sender === "client" && !m.readByCoach).length;
+  let badge = btn.querySelector(".msgunreadbadge");
+  if(count > 0){
+    if(!badge){
+      badge = document.createElement("span");
+      badge.className = "msgunreadbadge";
+      btn.appendChild(badge);
+    }
+    badge.textContent = String(count);
+  } else if(badge){
+    badge.remove();
+  }
+}
+
 async function initMessages(){
+  if(messagesDbInitDone) return; // already subscribed -- avoid a duplicate realtime channel on retry
   db = await getDb();
 
   if(!db){
@@ -5338,17 +5392,38 @@ async function initMessages(){
     return;
   }
 
+  messagesDbInitDone = true;
   messagesCol = db.collection("messages");
   messagesCol.orderBy("createdAt", "asc").limit(1000).onSnapshot(snap => {
     messagesCache = snap.docs.map(d => Object.assign({id: d.id}, d.data()));
+    autoUnarchiveClientsWithUnread();
     renderMessageThreadList();
     renderMessageThread();
+    updateMessagesTabBadge();
     // Keeps the coach's own "preview as this client" view (which shares
     // this same cache) showing new messages the instant they arrive too.
     safeRenderClientModeView();
   }, err => {
     flashNote("Couldn't load messages (" + err.code + ").", "dbnoteMessages");
   });
+}
+
+function buildMessageThreadRow({client, last, unread}){
+  const div = document.createElement("div");
+  div.className = "progitem" + (client.id === currentMessageClientId ? " active" : "");
+  // Slice the raw text BEFORE escaping it, not after -- slicing an
+  // already-escaped string risks cutting an HTML entity like "&amp;" in
+  // half and leaving a broken, literal "&am" on the page.
+  const rawPreview = last ? (last.sender === "coach" ? "You: " : "") + (last.body || "") : "No messages yet";
+  const preview = esc(rawPreview.slice(0, 60));
+  div.innerHTML = `${esc(client.name || "Client")}${unread ? `<span class="msgunreadbadge">${unread}</span>` : ""}<span class="meta">${preview}</span>`;
+  div.onclick = () => {
+    currentMessageClientId = client.id;
+    renderMessageThreadList();
+    renderMessageThread();
+    markClientMessagesReadByCoach(client.id);
+  };
+  return div;
 }
 
 function renderMessageThreadList(){
@@ -5365,29 +5440,38 @@ function renderMessageThreadList(){
     const unread = msgs.filter(m => m.sender === "client" && !m.readByCoach).length;
     return {client: c, last, unread};
   });
-  withLast.sort((a, b) => {
+  const byRecency = (a, b) => {
     if(a.last && b.last) return new Date(b.last.createdAt) - new Date(a.last.createdAt);
     if(a.last) return -1;
     if(b.last) return 1;
     return (a.client.name || "").localeCompare(b.client.name || "");
-  });
-  withLast.forEach(({client, last, unread}) => {
-    const div = document.createElement("div");
-    div.className = "progitem" + (client.id === currentMessageClientId ? " active" : "");
-    // Slice the raw text BEFORE escaping it, not after -- slicing an
-    // already-escaped string risks cutting an HTML entity like "&amp;" in
-    // half and leaving a broken, literal "&am" on the page.
-    const rawPreview = last ? (last.sender === "coach" ? "You: " : "") + (last.body || "") : "No messages yet";
-    const preview = esc(rawPreview.slice(0, 60));
-    div.innerHTML = `${esc(client.name || "Client")}${unread ? `<span class="msgunreadbadge">${unread}</span>` : ""}<span class="meta">${preview}</span>`;
-    div.onclick = () => {
-      currentMessageClientId = client.id;
-      renderMessageThreadList();
-      renderMessageThread();
-      markClientMessagesReadByCoach(client.id);
-    };
-    el.appendChild(div);
-  });
+  };
+  const active = withLast.filter(x => !x.client.messagesArchived).sort(byRecency);
+  const archived = withLast.filter(x => x.client.messagesArchived).sort(byRecency);
+
+  if(!active.length){
+    const p = document.createElement("div");
+    p.className = "emptyprogs";
+    p.textContent = archived.length ? "No active conversations — see Archived below." : "Add a client on THE SQUAD tab first, then you can message them here.";
+    el.appendChild(p);
+  } else {
+    active.forEach(x => el.appendChild(buildMessageThreadRow(x)));
+  }
+
+  // Archived conversations stay fully accessible -- tucked out of the way,
+  // never deleted -- and jump back to the active list on their own the
+  // moment a client sends something new (see autoUnarchiveClientsWithUnread).
+  if(archived.length){
+    const details = document.createElement("details");
+    details.className = "msgarchive";
+    details.open = msgArchiveOpen;
+    details.addEventListener("toggle", () => { msgArchiveOpen = details.open; });
+    const summary = document.createElement("summary");
+    summary.textContent = `Archived (${archived.length})`;
+    details.appendChild(summary);
+    archived.forEach(x => details.appendChild(buildMessageThreadRow(x)));
+    el.appendChild(details);
+  }
 }
 
 async function markClientMessagesReadByCoach(clientId){
@@ -5398,6 +5482,7 @@ async function markClientMessagesReadByCoach(clientId){
   // round-trip to confirm it -- same immediate-feedback pattern as sending.
   unread.forEach(m => { m.readByCoach = true; });
   renderMessageThreadList();
+  updateMessagesTabBadge();
   for(const m of unread){
     try{ await messagesCol.doc(m.id).update({readByCoach: true}); }catch(e){ /* badge already cleared locally; a later snapshot will reconcile if this failed */ }
   }
@@ -5419,9 +5504,28 @@ function renderMessageThread(){
 
   const wrap = document.createElement("div");
   wrap.className = "msgthread";
+
+  const threadHead = document.createElement("div");
+  threadHead.className = "msgthreadhead";
   const heading = document.createElement("h4");
   heading.textContent = client.name || "Client";
-  wrap.appendChild(heading);
+  threadHead.appendChild(heading);
+
+  const archiveBtn = document.createElement("button");
+  archiveBtn.type = "button";
+  archiveBtn.className = "msgarchivebtn";
+  archiveBtn.textContent = client.messagesArchived ? "Unarchive" : "Archive";
+  archiveBtn.title = client.messagesArchived
+    ? "Move this conversation back to your active list"
+    : "Tuck this conversation away -- it comes right back if they message you again";
+  archiveBtn.addEventListener("click", () => {
+    client.messagesArchived = !client.messagesArchived;
+    scheduleClientSave(client);
+    renderMessageThreadList();
+    renderMessageThread();
+  });
+  threadHead.appendChild(archiveBtn);
+  wrap.appendChild(threadHead);
 
   const scroller = document.createElement("div");
   scroller.className = "msgscroller";
