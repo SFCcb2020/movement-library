@@ -337,7 +337,7 @@ async function createProgramFromQueue(){
     exercises: queued.map(r => ({
       id: rid(), exercise: r.exercise, group: r.group, sub: r.sub, plane: r.plane,
       pattern: r.pattern, joint: r.joint, primary: r.primary, secondary: r.secondary,
-      sets: "", reps: "", load: "", notes: "",
+      sets: "", reps: "", load: "", rpe: "", notes: "",
     })),
   }];
   const data = {name: "New Program (from Queue)", days, weeks: 1, goal: "", coachNotes: "", liftStats: [], weightUnit: "kg", clientIds: [], createdAt: now, updatedAt: now};
@@ -1120,7 +1120,7 @@ function scheduleSave(){
     // so leaving it out means her save can never clobber a client's own
     // just-logged set with a stale in-memory copy from when she opened this
     // program. Clients write it themselves via save_program_actuals_for_code.
-    const payload = {name: currentProgram.name, days: currentProgram.days, weeks: currentProgram.weeks||1, goal: currentProgram.goal||"", coachNotes: currentProgram.coachNotes||"", liftStats: currentProgram.liftStats||[], weightUnit: currentProgram.weightUnit||"kg", clientIds: programClientIds(currentProgram), updatedAt: new Date().toISOString()};
+    const payload = {name: currentProgram.name, days: currentProgram.days, weeks: currentProgram.weeks||1, goal: currentProgram.goal||"", coachNotes: currentProgram.coachNotes||"", liftStats: currentProgram.liftStats||[], weightUnit: currentProgram.weightUnit||"kg", clientIds: programClientIds(currentProgram), prescribePercent: currentProgram.prescribePercent !== false, updatedAt: new Date().toISOString()};
     const badgeEl = document.getElementById("saveBadge");
     if(programsCol && !String(currentId).startsWith("local-")){
       try{
@@ -1151,6 +1151,7 @@ async function duplicateProgram(){
     weeks: currentProgram.weeks || 1, goal: currentProgram.goal || "", coachNotes: currentProgram.coachNotes || "",
     liftStats: JSON.parse(JSON.stringify(currentProgram.liftStats || [])), weightUnit: currentProgram.weightUnit || "kg",
     clientIds: programClientIds(currentProgram).slice(),
+    prescribePercent: currentProgram.prescribePercent !== false,
     createdAt: now, updatedAt: now,
   };
   if(programsCol){
@@ -1502,9 +1503,19 @@ function isDeloadWeek(i, weeks, goalProfile){
   return true;
 }
 
-function generateProgressionForExercise(ex, weeks, goalProfile, statsMap){
+// `prescribePercent` (default true when omitted, so any older call site
+// keeps today's behavior): when explicitly false, a compound lift's
+// auto-generated Load is left blank instead of a %1RM figure -- some
+// clients don't have 1RM testing to base a percentage on, so the coach
+// drives load off RPE (or their own judgement) instead. Sets/reps and the
+// deload/peak-week logic still progress exactly the same either way. An
+// RPE the coach already typed on the exercise is always carried forward
+// unchanged -- Apply Progression never invents or overwrites RPE values.
+function generateProgressionForExercise(ex, weeks, goalProfile, statsMap, prescribePercent){
+  const usePercent = prescribePercent !== false;
   const role = exerciseRole(ex);
   const stat = statsMap && statsMap.get(ex.exercise);
+  const rpe = ex.rpe || "";
   const arr = [];
   if(role === "compound"){
     const prof = GOAL_PROFILES[goalProfile.key] || GOAL_PROFILES.general;
@@ -1512,18 +1523,23 @@ function generateProgressionForExercise(ex, weeks, goalProfile, statsMap){
       const reps = Math.max(1, Math.round(lerp(prof.repsStart, prof.repsEnd, i, weeks)));
       let loadPct = Math.round(lerp(prof.loadStart, prof.loadEnd, i, weeks));
       let sets = Math.max(1, Math.round(lerp(prof.setsStart, prof.setsEnd, i, weeks)));
+      const deload = isDeloadWeek(i, weeks, goalProfile);
       let deloadTag = "";
-      if(isDeloadWeek(i, weeks, goalProfile)){
+      if(deload){
         loadPct = Math.max(40, Math.round(loadPct * 0.6));
         sets = Math.max(1, sets - 1);
         deloadTag = " — deload";
       }
-      const load = (stat ? `${loadPct}% (${Math.round(stat.oneRM * loadPct / 100)}${stat.unit})` : loadPct + "%") + deloadTag;
-      arr.push({sets: String(sets), reps: String(reps), load});
+      const load = usePercent
+        ? (stat ? `${loadPct}% (${Math.round(stat.oneRM * loadPct / 100)}${stat.unit})` : loadPct + "%") + deloadTag
+        : (deload ? "Deload" : "");
+      arr.push({sets: String(sets), reps: String(reps), load, rpe});
     }
     if(goalProfile.peak && weeks >= 3){
-      const testLoad = stat ? `90-95%+ (~${Math.round(stat.oneRM * 0.925)}${stat.unit} test)` : "90-95%+ (test new max)";
-      arr[weeks-1] = {sets: "1-3", reps: "1-2", load: testLoad};
+      const testLoad = usePercent
+        ? (stat ? `90-95%+ (~${Math.round(stat.oneRM * 0.925)}${stat.unit} test)` : "90-95%+ (test new max)")
+        : "Test new max";
+      arr[weeks-1] = {sets: "1-3", reps: "1-2", load: testLoad, rpe};
     }
   } else {
     const baseSets = parseInt(ex.sets, 10) || 3;
@@ -1534,7 +1550,7 @@ function generateProgressionForExercise(ex, weeks, goalProfile, statsMap){
       const sets = deload ? Math.max(1, baseSets - 1) : baseSets + bump;
       const baseLoad = role === "athletic" ? "" : (ex.load||"");
       const load = deload && baseLoad ? baseLoad + " (lighter)" : baseLoad;
-      arr.push({sets: String(sets), reps: String(baseReps), load});
+      arr.push({sets: String(sets), reps: String(baseReps), load, rpe});
     }
   }
   return arr;
@@ -1547,7 +1563,7 @@ function weeksCountFor(program){ return Math.max(1, Math.min(24, parseInt(progra
 // sets/reps/load as a starting point, and trims if weeks went down.
 function progressionOf(ex, weeks){
   if(!Array.isArray(ex.progression)) ex.progression = [];
-  const base = {sets: ex.sets||"", reps: ex.reps||"", load: ex.load||""};
+  const base = {sets: ex.sets||"", reps: ex.reps||"", load: ex.load||"", rpe: ex.rpe||""};
   // Build the extension as a separate array and concat it in, rather than
   // pushing onto ex.progression in place -- data that came straight from
   // the db capability's snapshot can be a read-only/frozen array, and
@@ -1559,7 +1575,7 @@ function progressionOf(ex, weeks){
     ex.progression = ex.progression.concat(extra);
   }
   if(ex.progression.length > weeks) ex.progression = ex.progression.slice(0, weeks);
-  ex.sets = ex.progression[0].sets; ex.reps = ex.progression[0].reps; ex.load = ex.progression[0].load;
+  ex.sets = ex.progression[0].sets; ex.reps = ex.progression[0].reps; ex.load = ex.progression[0].load; ex.rpe = ex.progression[0].rpe;
   return ex.progression;
 }
 
@@ -1679,6 +1695,7 @@ function updateFromActuals(){
   const weeks = weeksCountFor(currentProgram);
   if(weeks <= 1) return;
   const goalProfile = detectGoalProfile(currentProgram.goal);
+  const prescribePercent = currentProgram.prescribePercent !== false;
   // With a group program, "actual performance" has to mean ONE specific
   // person's -- the coach's "Referencing progress for" picker (defaults to
   // the only/first assigned client) says whose.
@@ -1716,17 +1733,17 @@ function updateFromActuals(){
         if(linkedClient) scheduleClientSave(linkedClient); else scheduleSave();
       }
       const statsMap = liftStatsMap(target);
-      const fresh = generateProgressionForExercise(ex, weeks, goalProfile, statsMap);
+      const fresh = generateProgressionForExercise(ex, weeks, goalProfile, statsMap, prescribePercent);
       for(let i = w + 1; i < weeks; i++) ex.progression[i] = fresh[i];
     }
 
     if(!hitTarget && ex.progression[w + 1]){
       // Missed the prescribed reps -- hold the next week rather than ramping
       // past a performance that didn't hit target.
-      ex.progression[w + 1] = {sets: wk.sets, reps: wk.reps, load: wk.load};
+      ex.progression[w + 1] = {sets: wk.sets, reps: wk.reps, load: wk.load, rpe: wk.rpe};
     }
 
-    ex.sets = ex.progression[0].sets; ex.reps = ex.progression[0].reps; ex.load = ex.progression[0].load;
+    ex.sets = ex.progression[0].sets; ex.reps = ex.progression[0].reps; ex.load = ex.progression[0].load; ex.rpe = ex.progression[0].rpe;
   }));
   renderEditor();
   scheduleSave();
@@ -1785,6 +1802,7 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
         <div class="exfield narrow"><label>Sets</label><input type="text" data-f="sets" value="${esc(ex.sets||"")}" placeholder="4"></div>
         <div class="exfield narrow"><label>Reps</label><input type="text" data-f="reps" value="${esc(ex.reps||"")}" placeholder="8"></div>
         <div class="exfield narrow"><label>Load</label><input type="text" data-f="load" value="${esc(ex.load||"")}" placeholder="70%"></div>
+        <div class="exfield narrow"><label>RPE</label><input type="text" data-f="rpe" value="${esc(ex.rpe||"")}" placeholder="8"></div>
         <div class="exfield notes"><label>Notes</label><input type="text" data-f="notes" value="${esc(ex.notes||"")}" placeholder="e.g. safety squat bar, tempo 3-1-1, cue: chest up"></div>
       </div>
     `;
@@ -1811,6 +1829,7 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
           <div class="rowlabel">Sets</div>
           <div class="rowlabel">Reps</div>
           <div class="rowlabel">Load</div>
+          <div class="rowlabel">RPE</div>
           <div class="rowdivider"></div>
           <div class="rowlabel actual">Logged</div>
         </div>
@@ -1820,6 +1839,7 @@ function buildProgExRow(ex, program, onChange, onRemove, onSwap){
             <input type="text" data-wf="sets" data-wi="${i}" value="${esc(wk.sets||"")}" placeholder="Sets">
             <input type="text" data-wf="reps" data-wi="${i}" value="${esc(wk.reps||"")}" placeholder="Reps">
             <input type="text" data-wf="load" data-wi="${i}" value="${esc(wk.load||"")}" placeholder="Load">
+            <input type="text" data-wf="rpe" data-wi="${i}" value="${esc(wk.rpe||"")}" placeholder="RPE">
             <div class="rowdivider"></div>
             <div class="actualsummary" title="Logged per set by the client -- open Preview Client View to see or edit the full breakdown">${esc(summarizeLoggedSetsFor(program, refClientId, ex, i) || "—")}</div>
           </div>
@@ -1914,7 +1934,7 @@ function buildDayEl(day){
           day.exercises = (day.exercises || []).concat([{
             id: rid(), exercise: m.exercise, group: m.group, sub: m.sub, plane: m.plane,
             pattern: m.pattern, joint: m.joint, primary: m.primary, secondary: m.secondary,
-            sets: "", reps: "", load: "", notes: "",
+            sets: "", reps: "", load: "", rpe: "", notes: "",
           }]);
           input.value = "";
           closeResults();
@@ -1950,7 +1970,7 @@ function buildPrintHTML(program, client){
     if(weeks > 1){
       for(let i=0; i<weeks; i++) h += `<th>Week ${i+1}</th>`;
     } else {
-      h += "<th>Sets</th><th>Reps</th><th>Load</th>";
+      h += "<th>Sets</th><th>Reps</th><th>Load</th><th>RPE</th>";
     }
     h += "<th>Notes</th></tr></thead><tbody>";
     (day.exercises || []).forEach(ex => {
@@ -1959,10 +1979,10 @@ function buildPrintHTML(program, client){
         const prog = Array.isArray(ex.progression) && ex.progression.length === weeks ? ex.progression : progressionOf(ex, weeks);
         for(let i=0; i<weeks; i++){
           const wk = prog[i] || {};
-          h += `<td>${esc(wk.sets||"")} × ${esc(wk.reps||"")}${wk.load ? ", " + esc(wk.load) : ""}</td>`;
+          h += `<td>${esc(wk.sets||"")} × ${esc(wk.reps||"")}${wk.load ? ", " + esc(wk.load) : ""}${wk.rpe ? ", RPE " + esc(wk.rpe) : ""}</td>`;
         }
       } else {
-        h += `<td>${esc(ex.sets||"")}</td><td>${esc(ex.reps||"")}</td><td>${esc(ex.load||"")}</td>`;
+        h += `<td>${esc(ex.sets||"")}</td><td>${esc(ex.reps||"")}</td><td>${esc(ex.load||"")}</td><td>${esc(ex.rpe||"")}</td>`;
       }
       h += `<td>${esc(ex.notes||"")}</td></tr>`;
     });
@@ -2094,7 +2114,7 @@ INSTRUCTIONS
       return {
         id: rid(), exercise: rec.exercise, group: rec.group, sub: rec.sub, plane: rec.plane,
         pattern: rec.pattern, joint: rec.joint, primary: rec.primary, secondary: rec.secondary,
-        sets: String(sx.sets||""), reps: String(sx.reps||""), load: "", notes: String(sx.notes||""),
+        sets: String(sx.sets||""), reps: String(sx.reps||""), load: "", rpe: "", notes: String(sx.notes||""),
       };
     }).filter(Boolean);
     return {id: rid(), label: (d.label || ("Day " + (i+1))), exercises};
@@ -2137,7 +2157,7 @@ INSTRUCTIONS
   const statsMap = linkedClient ? liftStatsMap(linkedClient) : null;
   days.forEach(d => d.exercises.forEach(ex => {
     ex.progression = generateProgressionForExercise(ex, weeksVal, goalProfile, statsMap);
-    ex.sets = ex.progression[0].sets; ex.reps = ex.progression[0].reps; ex.load = ex.progression[0].load;
+    ex.sets = ex.progression[0].sets; ex.reps = ex.progression[0].reps; ex.load = ex.progression[0].load; ex.rpe = ex.progression[0].rpe;
   }));
 
   const now = new Date().toISOString();
@@ -2774,6 +2794,10 @@ function renderEditor(){
     <div class="abform-field"><label>Program goal <span class="privatetag">Private — only you see this</span></label><input type="text" id="progGoalInput" value="${esc(p.goal||"")}" placeholder="e.g. Build to a new back squat 1RM"></div>
     <button class="applyprogbtn" id="applyProgressionBtn" type="button">⟳ Apply Progression</button>
     ${weeksCountFor(p) > 1 ? '<button class="applyprogbtn actualsbtn" id="updateActualsBtn" type="button">📈 Update from Actuals</button>' : ""}
+    <label class="pcttogglelabel" id="pctToggleLabel" title="When off, Apply Progression steps sets and reps as usual but leaves Load blank on compound lifts instead of a %1RM figure — for clients you're not prescribing load by percentage.">
+      <input type="checkbox" id="prescribePercentToggle" ${p.prescribePercent !== false ? "checked" : ""}>
+      Prescribe % of 1RM for load
+    </label>
     <div class="progressionhint">Progression is generated from the goal and each exercise's movement pattern — set the weeks and goal, hit Apply, then adjust any week freely. Every 4th week eases off automatically (deload). Log what was actually done in the "Done / Wt used" rows below, then hit Update from Actuals to have the remaining weeks adjust to it.</div>
   `;
   wrap.appendChild(metaRow);
@@ -2826,6 +2850,10 @@ function renderEditor(){
     currentProgram.goal = e.target.value;
     scheduleSave();
   });
+  document.getElementById("prescribePercentToggle").addEventListener("change", e => {
+    currentProgram.prescribePercent = e.target.checked;
+    scheduleSave();
+  });
   document.getElementById("coachNotesInput").addEventListener("input", e => {
     currentProgram.coachNotes = e.target.value;
     scheduleSave();
@@ -2841,9 +2869,10 @@ function renderEditor(){
     const refId = builderRefClientIdFor(currentProgram);
     const statSource = (refId && clientsCache.find(c => c.id === refId)) || currentProgram;
     const statsMap = liftStatsMap(statSource);
+    const prescribePercent = currentProgram.prescribePercent !== false;
     (currentProgram.days||[]).forEach(day => (day.exercises||[]).forEach(ex => {
-      ex.progression = generateProgressionForExercise(ex, weeks, goalProfile, statsMap);
-      ex.sets = ex.progression[0].sets; ex.reps = ex.progression[0].reps; ex.load = ex.progression[0].load;
+      ex.progression = generateProgressionForExercise(ex, weeks, goalProfile, statsMap, prescribePercent);
+      ex.sets = ex.progression[0].sets; ex.reps = ex.progression[0].reps; ex.load = ex.progression[0].load; ex.rpe = ex.progression[0].rpe;
     }));
     renderEditor();
     scheduleSave();
@@ -4813,7 +4842,7 @@ function buildClientExRow(ex, program, weeks, weekIndex, clientId){
   }
   const rxLabel = document.createElement("div");
   rxLabel.className = "cmrx";
-  rxLabel.textContent = `Target: ${wk.sets || "—"}×${wk.reps || "—"}${wk.load ? " @ " + wk.load : ""}`;
+  rxLabel.textContent = `Target: ${wk.sets || "—"}×${wk.reps || "—"}${wk.load ? " @ " + wk.load : ""}${wk.rpe ? " (RPE " + wk.rpe + ")" : ""}`;
   nowBox.appendChild(rxLabel);
   nowBox.appendChild(buildClientSetRows(program, clientId, ex, i));
   row.appendChild(nowBox);
