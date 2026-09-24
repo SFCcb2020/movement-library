@@ -713,43 +713,37 @@ footer{margin-top:34px; text-align:center; color:var(--ink-dim); font-size:12.5p
 .cmweeknow .cmrx{color:var(--ink); font-weight:600;}
 .cmweeknow input{width:96px; box-sizing:border-box; font-family:inherit; font-size:12px; border:1px solid var(--select); background:var(--select-soft); color:var(--select); border-radius:6px; padding:5px 7px; text-align:center;}
 /* Per-set entry rows -- one row per prescribed set (e.g. "3x9" = 3 rows),
-   each its own small card with labeled Reps/Weight steppers (easier to hit
-   accurately on a phone than a bare, unlabeled text box) and, once a set's
-   done, the rest timer on its own line below rather than squeezed in
-   alongside the inputs -- see buildClientSetRows. */
+   each its own small card with labeled Reps/Weight fields (the label stays
+   visible even once there's a value, unlike a bare placeholder) and, once
+   a set's done, the rest timer on its own line below rather than squeezed
+   in alongside the inputs -- see buildClientSetRows. Plain text fields
+   rather than +/- steppers: rapid taps on a tiny +/- button were
+   sometimes read as a double-tap on a phone and zoomed the whole page. */
 /* width:100% (not just flex-basis) is deliberate: with the richer content
-   now inside each set row (two labeled steppers), a bare flex-basis:100%
-   here stopped resolving against .cmweeknow's actual width and let the
-   row balloon out to its content's max size instead -- explicit width
-   pins it to the container regardless. */
+   now inside each set row, a bare flex-basis:100% here stopped resolving
+   against .cmweeknow's actual width and let the row balloon out to its
+   content's max size instead -- explicit width pins it to the container
+   regardless. */
 .cmweeknow .cmsetrows{flex:0 0 100%; width:100%; box-sizing:border-box; display:flex; flex-direction:column; gap:10px; margin-top:8px;}
 .cmsetrow{
   width:100%; box-sizing:border-box; background:var(--surface-2); border-radius:10px; padding:10px 12px 12px;
   display:flex; flex-direction:column; gap:8px;
 }
 .cmsetnum{font-size:11px; font-weight:700; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.04em;}
-/* Reps and Weight stack full-width rather than sitting side by side --
-   on a narrow phone, two steppers sharing one row leaves almost nothing
-   for the number itself once both +/- buttons are big enough to tap
-   comfortably. Full width keeps every stepper roomy at any screen size. */
+/* Reps and Weight stack full-width rather than sitting side by side, so
+   each field stays roomy and easy to tap at any screen size. */
 .cmsetfields{display:flex; flex-direction:column; gap:8px;}
 .cmsetfield{width:100%; display:flex; flex-direction:column; gap:4px;}
 .cmsetfield label{font-size:10.5px; font-weight:600; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.04em;}
-.cmstepper{display:flex; align-items:stretch; gap:0; border:1px solid var(--select); border-radius:8px; overflow:hidden; background:var(--select-soft);}
-.cmweeknow .cmstepper input{
-  flex:1 1 0; width:auto; min-width:0; border:none; border-left:1px solid var(--select); border-right:1px solid var(--select);
-  background:var(--bg); color:var(--select); border-radius:0; text-align:center; font-size:16px; font-weight:700; padding:9px 4px;
+.cmweeknow .cmsetinput{
+  width:100%; box-sizing:border-box; border:1px solid var(--select); background:var(--select-soft); color:var(--select);
+  border-radius:8px; text-align:center; font-size:18px; font-weight:700; padding:12px 8px;
 }
 /* The browser's default placeholder gray is too low-contrast against this
    card's dark-mode background (fails WCAG AA) -- use the app's own muted
    ink color instead, which is tuned for exactly this "readable but clearly
    not-yet-filled-in" look everywhere else. */
-.cmweeknow .cmstepper input::placeholder{color:var(--ink-dim); opacity:1;}
-.cmstepbtn{
-  flex:0 0 40px; border:none; background:transparent; color:var(--select); font-size:19px; font-weight:700;
-  line-height:1; cursor:pointer; padding:0; -webkit-tap-highlight-color:transparent;
-}
-.cmstepbtn:active{background:var(--select); color:var(--select-ink);}
+.cmweeknow .cmsetinput::placeholder{color:var(--ink-dim); opacity:1;}
 .cmsetrestrow{display:flex;}
 .cmaddsetbtn{
   align-self:flex-start; border:1px dashed var(--select); background:transparent; color:var(--select);
@@ -1022,6 +1016,14 @@ footer{margin-top:34px; text-align:center; color:var(--ink-dim); font-size:12.5p
   background:var(--surface); border-top:1px solid var(--line); box-shadow:0 -2px 16px rgba(20,26,23,.08);
   overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none;
   padding-bottom:env(safe-area-inset-bottom);
+  /* Promotes this onto its own GPU layer -- on iOS Safari a plain
+     position:fixed element can otherwise be left mis-composited (not
+     flush with the real bottom edge) after switching tabs changes the
+     page's height without an actual scroll gesture; see the matching
+     nudgeBottomNavRepaint() call in app.js for the other half of this
+     fix (forcing a recompute right after that height change happens). */
+  transform:translateZ(0);
+  -webkit-backface-visibility:hidden;
 }
 .bottomnav::-webkit-scrollbar{display:none;}
 .bottomnavbtn{
@@ -1057,8 +1059,7 @@ footer{margin-top:34px; text-align:center; color:var(--ink-dim); font-size:12.5p
   .cmpill > summary{padding:18px 2px; min-height:24px;}
   .card{padding:18px 16px 16px;}
   .searchrow .search{padding:12px 14px;}
-  .cmstepbtn{flex-basis:46px; font-size:21px;}
-  .cmweeknow .cmstepper input{padding:11px 4px;}
+  .cmweeknow .cmsetinput{padding:13px 8px;}
 
   /* A sticky, opaque header keeps a client's name/logout reachable while
      they scroll a long portal page, instead of it disappearing off the
