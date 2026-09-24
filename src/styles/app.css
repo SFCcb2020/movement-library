@@ -176,8 +176,15 @@ h1{
 .anatomydetails summary:hover{color:var(--ink);}
 .anatomybody{display:flex; flex-direction:column; gap:10px; margin-top:10px;}
 .anatomymusclecard{
-  background:var(--surface-2); border-radius:8px; padding:10px 12px;
+  background:var(--surface-2); border-radius:8px; padding:10px 12px; overflow:hidden;
 }
+/* Simple body-highlight diagram: floats beside the name/aka so the card
+   still reads top-to-bottom on a phone once the float clears (see
+   .anatomynote's clear:both below). Deliberately a plain schematic, not a
+   precise anatomical trace -- see the comment above ANATOMY_SILHOUETTE_PATHS. */
+.anatomydiagramwrap{float:right; width:72px; margin:0 0 8px 10px; text-align:center; flex-shrink:0;}
+.anatomydiagramwrap svg{width:100%; height:auto; display:block;}
+.anatomydiagramlabel{font-size:9px; font-weight:600; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.04em; margin-top:2px;}
 .anatomymusclecard h4{margin:0 0 2px; font-size:13px; font-weight:700; color:var(--ink);}
 .anatomyaka{font-size:11px; font-style:italic; color:var(--ink-dim); margin:0 0 6px;}
 .anatomyfield{font-size:12px; line-height:1.5; color:var(--ink); margin-bottom:5px;}
