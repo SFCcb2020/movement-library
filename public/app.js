@@ -6700,29 +6700,79 @@ function buildRestTimerControl(ex, weekIndex, setIndex){
   return wrap;
 }
 
+// Reps always nudge by 1; weight nudges by a round, plate-friendly amount
+// that depends on which unit this program logs in (mirrors the increment
+// already used for the "suggested weight" feature -- see suggestedWeightFor).
+function clientSetStepFor(field, program){
+  if(field === "reps") return 1;
+  return (program.weightUnit === "lb") ? 5 : 2.5;
+}
+
+// One tap of a +/- stepper: nudge the paired input by its step, floor at 0
+// (no negative reps/weight), keep reps whole, and round weight to avoid
+// floating-point dust (2.5 + 2.5 should read "5", not "4.999999999999999").
+function nudgeClientSetField(input, field, step){
+  const current = parseFloat(input.value) || 0;
+  let next = Math.round((current + step) * 100) / 100;
+  if(next < 0) next = 0;
+  input.value = (field === "reps") ? String(Math.round(next)) : String(next);
+}
+
 function buildClientSetRows(program, clientId, ex, weekIndex){
   const wrap = document.createElement("div");
   wrap.className = "cmsetrows";
   const wk = ex.progression[weekIndex];
   const restSecs = parseInt(ex.restSeconds, 10) || 0;
+  const repStep = clientSetStepFor("reps", program);
+  const weightStep = clientSetStepFor("weight", program);
   const actualSets = ensureClientActualSets(program, clientId, ex, weekIndex);
   actualSets.forEach((setEntry, si) => {
     const setRow = document.createElement("div");
     setRow.className = "cmsetrow";
     setRow.innerHTML = `
-      <span class="cmsetnum">Set ${si + 1}</span>
-      <input type="text" inputmode="decimal" data-sf="reps" value="${esc(setEntry.reps || "")}" placeholder="Reps">
-      <input type="text" inputmode="decimal" data-sf="weight" value="${esc(setEntry.weight || "")}" placeholder="Weight">
+      <div class="cmsetnum">Set ${si + 1}</div>
+      <div class="cmsetfields">
+        <div class="cmsetfield">
+          <label>Reps</label>
+          <div class="cmstepper">
+            <button type="button" class="cmstepbtn" data-sf="reps" data-step="${-repStep}" aria-label="Decrease reps">&minus;</button>
+            <input type="text" inputmode="decimal" data-sf="reps" value="${esc(setEntry.reps || "")}" placeholder="0">
+            <button type="button" class="cmstepbtn" data-sf="reps" data-step="${repStep}" aria-label="Increase reps">+</button>
+          </div>
+        </div>
+        <div class="cmsetfield">
+          <label>Weight${program.weightUnit ? " (" + esc(program.weightUnit) + ")" : ""}</label>
+          <div class="cmstepper">
+            <button type="button" class="cmstepbtn" data-sf="weight" data-step="${-weightStep}" aria-label="Decrease weight">&minus;</button>
+            <input type="text" inputmode="decimal" data-sf="weight" value="${esc(setEntry.weight || "")}" placeholder="0">
+            <button type="button" class="cmstepbtn" data-sf="weight" data-step="${weightStep}" aria-label="Increase weight">+</button>
+          </div>
+        </div>
+      </div>
     `;
-    setRow.querySelectorAll("[data-sf]").forEach(inp => {
-      inp.addEventListener("input", () => {
-        const fresh = getClientActuals(program, clientId, ex, weekIndex).slice();
-        fresh[si] = Object.assign({}, fresh[si], {[inp.dataset.sf]: inp.value});
-        setClientActuals(program, clientId, ex, weekIndex, fresh);
-        scheduleClientProgramActualsSave(program);
+    function commit(inp){
+      const fresh = getClientActuals(program, clientId, ex, weekIndex).slice();
+      fresh[si] = Object.assign({}, fresh[si], {[inp.dataset.sf]: inp.value});
+      setClientActuals(program, clientId, ex, weekIndex, fresh);
+      scheduleClientProgramActualsSave(program);
+    }
+    setRow.querySelectorAll("input[data-sf]").forEach(inp => {
+      inp.addEventListener("input", () => commit(inp));
+    });
+    setRow.querySelectorAll(".cmstepbtn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const field = btn.dataset.sf;
+        const input = setRow.querySelector(`input[data-sf="${field}"]`);
+        nudgeClientSetField(input, field, parseFloat(btn.dataset.step));
+        commit(input);
       });
     });
-    if(restSecs > 0) setRow.appendChild(buildRestTimerControl(ex, weekIndex, si));
+    if(restSecs > 0){
+      const restRow = document.createElement("div");
+      restRow.className = "cmsetrestrow";
+      restRow.appendChild(buildRestTimerControl(ex, weekIndex, si));
+      setRow.appendChild(restRow);
+    }
     wrap.appendChild(setRow);
   });
   const addBtn = document.createElement("button");
