@@ -28,7 +28,8 @@
   --region-lower:#49c795; --region-core:#e0ac52; --region-push:#6fa9e0; --region-pull:#d17bb2; --region-athletic:#e2766a; --region-mobility:#5cc9d9;
   --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
 }
-*{box-sizing:border-box}
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+html{scroll-behavior:smooth;}
 body{
   margin:0; background:var(--bg); color:var(--ink);
   font-family:"Work Sans", -apple-system, "Segoe UI", sans-serif;
@@ -944,6 +945,61 @@ footer{margin-top:34px; text-align:center; color:var(--ink-dim); font-size:12.5p
 }
 .msgsendrow button:hover{opacity:.9;}
 .msgsendrow button:disabled{opacity:.6; cursor:default;}
+
+/* ---------------------------------------------------------------------
+   Bottom navigation -- the mobile "app feel" replacement for a row of
+   text tabs. Hidden by default (the coach's top .tabbar keeps working as
+   the primary nav on a wide screen); the mobile media query below swaps
+   the two around. Shared by the coach's 9-item nav (#coachBottomNav) and
+   the client portal's smaller 4-item one, so one set of rules styles
+   both.
+--------------------------------------------------------------------- */
+.bottomnav{
+  display:none; position:fixed; left:0; right:0; bottom:0; z-index:40;
+  background:var(--surface); border-top:1px solid var(--line); box-shadow:0 -2px 16px rgba(20,26,23,.08);
+  overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none;
+  padding-bottom:env(safe-area-inset-bottom);
+}
+.bottomnav::-webkit-scrollbar{display:none;}
+.bottomnavbtn{
+  flex:0 0 auto; width:66px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:3px; background:none; border:none; color:var(--ink-dim); font-family:"Work Sans",sans-serif;
+  font-size:10.5px; font-weight:600; letter-spacing:.01em; padding:9px 2px 7px; cursor:pointer;
+  transition:color .15s ease, transform .12s ease;
+}
+.bottomnavicon{width:22px; height:22px; flex:none;}
+.bottomnavbtn.active{color:var(--accent);}
+.bottomnavbtn:active{transform:scale(0.94);}
+.bottomnavbtn .msgunreadbadge{margin:0;}
+
+@media (max-width:760px){
+  body{padding-bottom:calc(78px + env(safe-area-inset-bottom));}
+  .tabbar{display:none;}
+  .bottomnav{display:flex;}
+
+  /* Touch-friendly sizing -- 16px inputs stop iOS Safari zooming the page
+     in on focus (its classic "feels like a website, not an app" tell),
+     and a little extra padding on the most-tapped controls makes them
+     easier to hit with a thumb. */
+  input, textarea, select{font-size:16px;}
+  .queuebtn, .newprogbtn, .cmlogout, .msgsendrow button, .clearbtn, .addexercisebtn{padding-top:12px; padding-bottom:12px;}
+  .pill{padding:8px 13px;}
+  .cmpill > summary{padding:18px 2px; min-height:24px;}
+  .card{padding:18px 16px 16px;}
+  .searchrow .search{padding:12px 14px;}
+
+  /* A sticky, opaque header keeps a client's name/logout reachable while
+     they scroll a long portal page, instead of it disappearing off the
+     top the way a plain webpage would. */
+  .cmheader{position:sticky; top:0; z-index:30; background:var(--bg); padding:12px 0; margin:-12px 0 14px;}
+}
+
+/* Small transition polish so switching tabs and opening a pill feels like
+   a native reveal rather than an instant, jarring swap. Kept to opacity/
+   transform only so it stays cheap and safe across every existing view. */
+.tabpanel.active{animation:sfcFadeIn .22s ease;}
+.cmpill[open] > .cmpillbody{animation:sfcFadeIn .2s ease;}
+@keyframes sfcFadeIn{from{opacity:0; transform:translateY(4px);} to{opacity:1; transform:none;}}
 
 #printArea{display:none;}
 @media print{
