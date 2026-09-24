@@ -161,6 +161,20 @@ h1{
 .queuebtn:hover{border-color:var(--select); color:var(--select);}
 .queuebtn.queued{background:var(--select-soft); border-color:var(--select); color:var(--select);}
 
+/* Recovery Library -- same card/grid/facet look as the Exercise Library,
+   plus a small citation list at the bottom of each card instead of the
+   queue-to-program buttons (recovery items are never added to a plan). */
+.recoverylibrary{margin-top:4px;}
+.recoverysources{
+  margin-top:12px; padding-top:10px; border-top:1px dashed var(--line);
+  display:flex; flex-direction:column; gap:4px;
+}
+.recoverysourceslabel{
+  font-weight:600; color:var(--ink-dim); font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+}
+.recoverysourcelink{font-size:12px; color:var(--accent); text-decoration:none; line-height:1.4;}
+.recoverysourcelink:hover{text-decoration:underline;}
+
 /* Exercise Library's "Program Queue" strip -- exercises picked while
    browsing, waiting to become a new program's Day 1. */
 .queuebar{
