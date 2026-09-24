@@ -1561,6 +1561,25 @@ function showTab(name){
     initEnquiries();
   }
   if(coachBottomNav) coachBottomNav.setActive(name);
+  nudgeBottomNavRepaint();
+}
+
+// iOS Safari can leave a position:fixed bottom nav visually stuck short of
+// the real bottom edge after something changes the page's height without
+// an actual scroll gesture -- switching tabs here, or the client nav
+// opening/scrolling to a pill. A 1px scroll-and-back forces WebKit to
+// recompute the fixed element against the current viewport instead of
+// whatever it had composited before the height changed. Cheap and a no-op
+// everywhere else, so it's safe to call after every nav action rather than
+// only on the browsers/tabs actually affected.
+function nudgeBottomNavRepaint(){
+  if(typeof window === "undefined" || typeof window.scrollTo !== "function") return;
+  const raf = typeof window.requestAnimationFrame === "function" ? window.requestAnimationFrame.bind(window) : (fn => setTimeout(fn, 0));
+  raf(() => {
+    const x = window.scrollX || 0, y = window.scrollY || 0;
+    window.scrollTo(x, y + 1);
+    raf(() => window.scrollTo(x, y));
+  });
 }
 
 // Simple, consistent stroke-icon set (24x24, currentColor) shared between
@@ -2766,14 +2785,28 @@ function setClientActuals(program, clientId, ex, weekIndex, setsArr){
 // path, so (unlike getClientActuals above) it's expected to migrate a
 // legacy entry into the new shape and persist it rather than just reading
 // it.
+//
+// A brand-new set entry starts pre-filled with whatever this client
+// actually logged at the same set index the PREVIOUS week (if any),
+// rather than blank -- once a training day's been saved, that reps/
+// weight carries forward as next week's starting point instead of the
+// client retyping the same numbers from scratch. It's still just a
+// starting value: editable like any other entry, and only applied the
+// one time a set index doesn't exist yet for this week (see the
+// arr.length check below) -- an existing entry, even one the client left
+// blank on purpose, is never overwritten on a later render.
 function ensureClientActualSets(program, clientId, ex, weekIndex){
   if(!ex.id) ex.id = rid(); // safety net for any older exercise saved before ids were added
   const wk = ex.progression && ex.progression[weekIndex];
   let arr = getClientActuals(program, clientId, ex, weekIndex);
   const needed = prescribedSetCount(wk);
   if(arr.length < needed){
+    const prevWeekActuals = weekIndex > 0 ? getClientActuals(program, clientId, ex, weekIndex - 1) : [];
     const extra = [];
-    while(arr.length + extra.length < needed) extra.push({reps: "", weight: ""});
+    while(arr.length + extra.length < needed){
+      const prev = prevWeekActuals[arr.length + extra.length];
+      extra.push({reps: (prev && prev.reps) || "", weight: (prev && prev.weight) || ""});
+    }
     arr = arr.concat(extra);
   }
   setClientActuals(program, clientId, ex, weekIndex, arr);
@@ -6700,22 +6733,17 @@ function buildRestTimerControl(ex, weekIndex, setIndex){
   return wrap;
 }
 
-// Reps always nudge by 1; weight nudges by a round, plate-friendly amount
-// that depends on which unit this program logs in (mirrors the increment
-// already used for the "suggested weight" feature -- see suggestedWeightFor).
-function clientSetStepFor(field, program){
-  if(field === "reps") return 1;
-  return (program.weightUnit === "lb") ? 5 : 2.5;
-}
-
-// One tap of a +/- stepper: nudge the paired input by its step, floor at 0
-// (no negative reps/weight), keep reps whole, and round weight to avoid
-// floating-point dust (2.5 + 2.5 should read "5", not "4.999999999999999").
-function nudgeClientSetField(input, field, step){
-  const current = parseFloat(input.value) || 0;
-  let next = Math.round((current + step) * 100) / 100;
-  if(next < 0) next = 0;
-  input.value = (field === "reps") ? String(Math.round(next)) : String(next);
+// Keeps a reps/weight field to digits plus a single decimal point --
+// +/- steppers used to live here, but on a real phone rapid taps on a
+// tiny +/- button were sometimes read as a double-tap and zoomed the
+// whole page in, so typing straight into a plain field (numbers only) is
+// both simpler and avoids that entirely. Strips anything else (letters,
+// extra dots, spaces) as the client types.
+function sanitizeDecimalInput(value){
+  let v = String(value == null ? "" : value).replace(/[^0-9.]/g, "");
+  const dot = v.indexOf(".");
+  if(dot !== -1) v = v.slice(0, dot + 1) + v.slice(dot + 1).replace(/\./g, "");
+  return v;
 }
 
 function buildClientSetRows(program, clientId, ex, weekIndex){
@@ -6723,8 +6751,6 @@ function buildClientSetRows(program, clientId, ex, weekIndex){
   wrap.className = "cmsetrows";
   const wk = ex.progression[weekIndex];
   const restSecs = parseInt(ex.restSeconds, 10) || 0;
-  const repStep = clientSetStepFor("reps", program);
-  const weightStep = clientSetStepFor("weight", program);
   const actualSets = ensureClientActualSets(program, clientId, ex, weekIndex);
   actualSets.forEach((setEntry, si) => {
     const setRow = document.createElement("div");
@@ -6734,19 +6760,11 @@ function buildClientSetRows(program, clientId, ex, weekIndex){
       <div class="cmsetfields">
         <div class="cmsetfield">
           <label>Reps</label>
-          <div class="cmstepper">
-            <button type="button" class="cmstepbtn" data-sf="reps" data-step="${-repStep}" aria-label="Decrease reps">&minus;</button>
-            <input type="text" inputmode="decimal" data-sf="reps" value="${esc(setEntry.reps || "")}" placeholder="0">
-            <button type="button" class="cmstepbtn" data-sf="reps" data-step="${repStep}" aria-label="Increase reps">+</button>
-          </div>
+          <input type="text" inputmode="decimal" class="cmsetinput" data-sf="reps" value="${esc(setEntry.reps || "")}" placeholder="0">
         </div>
         <div class="cmsetfield">
           <label>Weight${program.weightUnit ? " (" + esc(program.weightUnit) + ")" : ""}</label>
-          <div class="cmstepper">
-            <button type="button" class="cmstepbtn" data-sf="weight" data-step="${-weightStep}" aria-label="Decrease weight">&minus;</button>
-            <input type="text" inputmode="decimal" data-sf="weight" value="${esc(setEntry.weight || "")}" placeholder="0">
-            <button type="button" class="cmstepbtn" data-sf="weight" data-step="${weightStep}" aria-label="Increase weight">+</button>
-          </div>
+          <input type="text" inputmode="decimal" class="cmsetinput" data-sf="weight" value="${esc(setEntry.weight || "")}" placeholder="0">
         </div>
       </div>
     `;
@@ -6757,14 +6775,14 @@ function buildClientSetRows(program, clientId, ex, weekIndex){
       scheduleClientProgramActualsSave(program);
     }
     setRow.querySelectorAll("input[data-sf]").forEach(inp => {
-      inp.addEventListener("input", () => commit(inp));
-    });
-    setRow.querySelectorAll(".cmstepbtn").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const field = btn.dataset.sf;
-        const input = setRow.querySelector(`input[data-sf="${field}"]`);
-        nudgeClientSetField(input, field, parseFloat(btn.dataset.step));
-        commit(input);
+      inp.addEventListener("input", () => {
+        const cleaned = sanitizeDecimalInput(inp.value);
+        if(cleaned !== inp.value){
+          const caret = (inp.selectionStart || inp.value.length) - (inp.value.length - cleaned.length);
+          inp.value = cleaned;
+          try{ inp.setSelectionRange(caret, caret); }catch(e){}
+        }
+        commit(inp);
       });
     });
     if(restSecs > 0){
@@ -7265,12 +7283,14 @@ function renderClientModeView(){
   ], key => {
     if(key === "home"){
       window.scrollTo({top: 0, behavior: "smooth"});
+      nudgeBottomNavRepaint();
       return;
     }
     const pill = document.getElementById(key);
     if(!pill) return;
     if(!pill.open) pill.open = true;
     if(pill.scrollIntoView) pill.scrollIntoView({behavior: "smooth", block: "start"});
+    nudgeBottomNavRepaint();
   });
   applyUnreadBadge(clientNav.btns.cmMessagesPill, myUnread);
   host.appendChild(clientNav.el);
