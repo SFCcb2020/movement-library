@@ -47,6 +47,7 @@ let cmTodaysAgendaOpen = false;
 let cmTrainingPlanOpen = false;
 let cmRehabOpen = false;
 let cmNutritionOpen = false;
+let cmRecoveryOpen = false;
 let cmMessagesOpen = false;
 let cmWeeklyAgendaOpen = false; // the old full 7-day view, now tucked inside Today's Agenda as a secondary toggle
 // Shared between the Training Plan pill's per-day pills and the matching
@@ -721,6 +722,322 @@ async function saveCustomExercise(panel, state){
 render();
 
 /* ---------------------------------------------------------------------
+   Recovery Library -- a standalone, browsable reference library of
+   evidence-based recovery modalities. Unlike the Exercise Library, none
+   of this is ever added to a training or rehab program: it's just
+   something both the coach and her clients can browse for guidance, with
+   real citations behind every entry. Built as one self-contained function
+   (buildRecoveryLibrary) rather than wired to fixed DOM ids like the
+   Exercise Library is, so the exact same component can be mounted both as
+   the coach's own "Recovery" tab and inside a client's own portal pill
+   without the two instances' search/filter state ever colliding.
+--------------------------------------------------------------------- */
+const RECOVERY_CATEGORIES = [
+  "Gentle movement / mobility",
+  "Walking / low-intensity cardio",
+  "Hot & cold exposure",
+  "Swimming / water-based recovery",
+];
+
+const RECOVERY_DATA = [
+  {
+    id: "rec-foam-rolling",
+    category: "Gentle movement / mobility",
+    name: "Foam Rolling / Self-Myofascial Release",
+    summary: "Rolling major muscle groups over a foam roller or massage ball to ease tightness and take the edge off soreness.",
+    howTo: "30–90 seconds per muscle group with gentle-to-moderate pressure, breathing steadily rather than tensing against it. Works well on a rest day or the evening after a hard session — it isn't a substitute for a proper warm-up.",
+    evidence: "A systematic review and meta-analysis in the Journal of Bodywork & Movement Therapies pooling foam-rolling studies found small-to-moderate improvements in range of motion and modest reductions in perceived muscle soreness (DOMS) in the days after hard training, with no evidence of harm. A 2024 meta-analysis comparing static stretching with foam rolling found the two produce broadly similar short-term range-of-motion gains.",
+    cautions: "The soreness benefit is modest and short-lived — foam rolling isn't a fix for an actual injury, and rolling directly over a joint, bone, or acute injury site should be avoided.",
+    sources: [
+      {title: "A systematic review and meta-analysis of the effects of foam rolling on range of motion, recovery and markers of athletic performance", url: "https://pubmed.ncbi.nlm.nih.gov/32825976/"},
+      {title: "Static Stretch Training versus Foam Rolling Training Effects on Range of Motion: A Systematic Review and Meta-Analysis", url: "https://pubmed.ncbi.nlm.nih.gov/38760635/"},
+    ],
+  },
+  {
+    id: "rec-dynamic-mobility",
+    category: "Gentle movement / mobility",
+    name: "Dynamic Mobility Flow",
+    summary: "A short flow of controlled, full-range movements — leg swings, hip openers, thoracic rotations and similar — done at an easy pace.",
+    howTo: "8–12 minutes, 6–10 reps or 20–30 seconds per movement, moving through the full comfortable range without forcing or bouncing. Works well as an easy rest-day session or to open an easy day.",
+    evidence: "A 2024 systematic review of mobility training methods in sporting populations (Journal of Sports Sciences) found that regular mobility work, including dynamic range-of-motion drills, reliably improves joint range of motion and can support movement quality — with the clearest effects coming from consistent short sessions rather than occasional long ones.",
+    cautions: "Mobility work maintains and improves range of motion; it isn't a replacement for strength training, and range of motion gained without the strength to control it doesn't reduce injury risk on its own.",
+    sources: [
+      {title: "Application of mobility training methods in sporting populations: A systematic review of performance adaptations", url: "https://www.tandfonline.com/doi/full/10.1080/02640414.2024.2321006"},
+    ],
+  },
+  {
+    id: "rec-restorative-yoga",
+    category: "Gentle movement / mobility",
+    name: "Restorative / Gentle Yoga",
+    summary: "A slow, low-load yoga session focused on breathing and gentle stretching rather than strength or balance challenges.",
+    howTo: "15–30 minutes, holding gentle stretches for 30–60+ seconds and breathing slowly through the nose. Best scheduled on a rest day rather than straight after a heavy session.",
+    evidence: "A review in the International Journal of Yoga on yoga's place in sports medicine and rehabilitation notes it's commonly used alongside conventional training to support flexibility, body awareness, and stress/parasympathetic recovery — though the authors are clear the evidence for yoga specifically improving athletic performance is thinner than its evidence for general wellbeing and mobility.",
+    cautions: "Gentle yoga doesn't replace sport-specific mobility or strength work, and every pose should be scaled well within a comfortable, pain-free range.",
+    sources: [
+      {title: "Yoga as Part of Sports Medicine and Rehabilitation", url: "https://www.ovid.com/jnls/ijoy/fulltext/10.4103/ijoy.ijoy_212_23~yoga-as-part-of-sports-medicine-and-rehabilitation"},
+    ],
+  },
+  {
+    id: "rec-static-stretching",
+    category: "Gentle movement / mobility",
+    name: "Static Stretching",
+    summary: "Holding a gentle stretch at the end of a session, or on an easy day, for the muscle groups used that day.",
+    howTo: "2–4 stretches per muscle group, held 20–30 seconds each, only within a comfortable range — never bouncing or stretching into pain.",
+    evidence: "A well-known Cochrane systematic review (Herbert et al.) of stretching before or after exercise found it produces only small, likely not clinically meaningful reductions in delayed-onset muscle soreness. It's still worth keeping for flexibility and as a settling-down ritual — the 2024 meta-analysis above found stretching and foam rolling give broadly similar short-term range-of-motion benefits — but it shouldn't be relied on as a soreness \"fix\".",
+    cautions: "This is about post-training/rest-day stretching. Static stretching used as a WARM-UP, right before a max-effort session, is a separate context and can temporarily reduce force/power output.",
+    sources: [
+      {title: "Stretching to prevent or reduce muscle soreness after exercise (Cochrane Review)", url: "https://www.cochranelibrary.com/cdsr/doi/10.1002/14651858.CD004577.pub3/full"},
+      {title: "Static Stretch Training versus Foam Rolling Training Effects on Range of Motion: A Systematic Review and Meta-Analysis", url: "https://pubmed.ncbi.nlm.nih.gov/38760635/"},
+    ],
+  },
+  {
+    id: "rec-recovery-walk",
+    category: "Walking / low-intensity cardio",
+    name: "Recovery Walk",
+    summary: "A relaxed walk, outdoors or on a treadmill, done on a rest day or the day after a hard session.",
+    howTo: "20–40 minutes at a conversational pace — you should be able to hold a conversation without getting out of breath. No intervals, no hills pushed hard.",
+    evidence: "A 2010 study in the Journal of Sports Sciences (Menzies et al.) found blood lactate clears faster with easy, moderate-intensity active recovery than with sitting still — though the benefit depends on getting the intensity right; too easy or too hard both clear it less well. A 2022 crossover trial in Frontiers in Physiology found that, for a single session, 15 minutes of low-intensity movement gave no clear advantage over complete rest for next-day soreness or performance — so easy walking is a genuinely evidence-backed way to support blood flow and lactate clearance, without it being a guaranteed fix for how sore or ready you'll feel tomorrow.",
+    cautions: "",
+    sources: [
+      {title: "Blood lactate clearance during active recovery after an intense running bout depends on the intensity of the active recovery", url: "https://www.tandfonline.com/doi/full/10.1080/02640414.2010.481721"},
+      {title: "Comparison of Different Recovery Strategies After High-Intensity Functional Training: A Crossover Randomized Controlled Trial", url: "https://www.frontiersin.org/journals/physiology/articles/10.3389/fphys.2022.819588/full"},
+    ],
+  },
+  {
+    id: "rec-easy-bike",
+    category: "Walking / low-intensity cardio",
+    name: "Easy Bike Spin",
+    summary: "A relaxed spin on a stationary or road bike, kept deliberately light.",
+    howTo: "15–30 minutes at a very easy, low-resistance pace — this should feel almost too easy, not like a training session.",
+    evidence: "Same evidence base as the recovery walk above: light-to-moderate active recovery speeds blood lactate clearance versus passive rest, though a single easy-movement session hasn't been shown to reliably reduce next-day soreness or boost the very next training session on its own.",
+    cautions: "",
+    sources: [
+      {title: "Blood lactate clearance during active recovery after an intense running bout depends on the intensity of the active recovery", url: "https://www.tandfonline.com/doi/full/10.1080/02640414.2010.481721"},
+    ],
+  },
+  {
+    id: "rec-zone1-cardio",
+    category: "Walking / low-intensity cardio",
+    name: "Zone 1 Easy Cardio (jog / row / cross-trainer)",
+    summary: "Any easy-paced cardio machine or jog, kept well below training intensity.",
+    howTo: "15–25 minutes at a heart rate/effort you could sustain for an hour, focusing on smooth, relaxed movement rather than pace.",
+    evidence: "Same lactate-clearance and active-recovery evidence as the recovery walk and easy bike entries above — the physiological logic (and its limits) is the same regardless of which easy cardio modality is used.",
+    cautions: "",
+    sources: [
+      {title: "Blood lactate clearance during active recovery after an intense running bout depends on the intensity of the active recovery", url: "https://www.tandfonline.com/doi/full/10.1080/02640414.2010.481721"},
+    ],
+  },
+  {
+    id: "rec-cold-water-immersion",
+    category: "Hot & cold exposure",
+    name: "Cold Water Immersion (Ice Bath)",
+    summary: "Full or partial-body immersion in cold water for a short time after a hard session.",
+    howTo: "Commonly studied protocols use 10–15°C water for 10–20 minutes; shorter, less extreme versions (2–5 minutes) are more tolerable and still within the studied range.",
+    evidence: "A 2023 meta-analysis in Frontiers in Physiology found cold water immersion gave an immediate reduction in perceived soreness and exertion right after exercise, but that advantage disappeared by 24–48 hours; it also temporarily reduced jump performance right after immersion, while markers like creatine kinase and lactate improved at 24–48 hours. Separately, a 2024 meta-analysis (Piñero et al., European Journal of Sport Science) found that routinely using cold water immersion right after resistance-training sessions can blunt long-term strength and muscle-growth adaptations — so timing relative to a strength block matters.",
+    cautions: "Best reserved for a demanding competition block or heavy travel/match schedule where feeling fresh matters more than maximising adaptation, rather than routinely straight after a strength or hypertrophy session. Anyone with a heart condition, Raynaud's, or similar should check with a doctor first — this library can't assess that for a specific client.",
+    sources: [
+      {title: "Effects of cold water immersion after exercise on fatigue recovery and exercise performance – meta analysis", url: "https://www.frontiersin.org/journals/physiology/articles/10.3389/fphys.2023.1006512/full"},
+      {title: "Throwing cold water on muscle growth: A systematic review with meta-analysis of the effects of postexercise cold water immersion on resistance training-induced hypertrophy", url: "https://onlinelibrary.wiley.com/doi/full/10.1002/ejsc.12074"},
+    ],
+  },
+  {
+    id: "rec-cold-shower",
+    category: "Hot & cold exposure",
+    name: "Cold Shower (accessible alternative)",
+    summary: "A short blast of cold water at the end of a normal shower — the accessible version of cold water immersion when there's no bath, tub or plunge pool available.",
+    howTo: "30–90 seconds of cold water at the end of a normal shower, easing in gradually rather than starting fully cold.",
+    evidence: "Cold showers haven't been studied nearly as rigorously as full cold water immersion, so the immersion evidence above (immediate soreness relief, no effect by 24–48 hours, possible blunting of strength/hypertrophy adaptations if used right after lifting) is the closest evidence available, and should be read as \"likely similar in direction, but a weaker and shorter exposure\" rather than confirmed for showers specifically.",
+    cautions: "Same cautions as cold water immersion above.",
+    sources: [
+      {title: "Effects of cold water immersion after exercise on fatigue recovery and exercise performance – meta analysis", url: "https://www.frontiersin.org/journals/physiology/articles/10.3389/fphys.2023.1006512/full"},
+    ],
+  },
+  {
+    id: "rec-contrast-water-therapy",
+    category: "Hot & cold exposure",
+    name: "Contrast Water Therapy",
+    summary: "Alternating short bouts of hot and cold water immersion (or hot/cold showers) within the same session.",
+    howTo: "Typical research protocols alternate roughly 1 minute cold (8–15°C) with 1–3 minutes warm (35.5–45°C), repeated for a total of 6–24 minutes.",
+    evidence: "A meta-analysis in PLOS One found contrast water therapy gave modest reductions in muscle soreness (roughly 5–9% on standard soreness scales) versus passive rest at every time point measured, and reduced strength loss more consistently than it helped jump/power performance. The authors were clear that all 18 included studies carried a high risk of bias (small samples, limited blinding), and contrast therapy showed no clear advantage over cold water immersion alone.",
+    cautions: "Read the evidence honestly as \"probably helps a little with soreness, but the studies behind that aren't strong\" — not as a proven upgrade on a plain ice bath or an easy active-recovery session.",
+    sources: [
+      {title: "Contrast Water Therapy and Exercise Induced Muscle Damage: A Systematic Review and Meta-Analysis", url: "https://journals.plos.org/plosone/article?id=10.1371%2Fjournal.pone.0062356"},
+    ],
+  },
+  {
+    id: "rec-sauna",
+    category: "Hot & cold exposure",
+    name: "Sauna / Heat Exposure",
+    summary: "Sitting in a sauna (traditional dry heat or infrared) after training or on a rest day.",
+    howTo: "Commonly studied protocols use 15–20 minutes of high heat, sometimes repeated several times a week. Rehydrate well afterward.",
+    evidence: "Regular sauna use has solid evidence behind it for general cardiovascular health: a large Finnish cohort study (Laukkanen et al., BMC Medicine, 2018) linked frequent sauna bathing with lower cardiovascular mortality in men and women. The evidence specifically for athletic recovery — reducing next-day soreness or restoring performance faster — is newer and less settled; reviews on this exact question are still emerging (e.g. a 2025 systematic review in Sports Medicine – Open), so it's fairer to treat sauna as \"good for general health and an athlete's downtime routine\" than as a proven recovery accelerator.",
+    cautions: "Avoid on very hot or already-dehydrated match days, and be cautious after training that itself involved heat exposure (avoiding stacking two heat loads). Rehydrate properly rather than treating sauna as a substitute for fluid/electrolyte replacement.",
+    sources: [
+      {title: "Sauna bathing is associated with reduced cardiovascular mortality and improves risk prediction in men and women: a prospective cohort study", url: "https://link.springer.com/article/10.1186/s12916-018-1198-0"},
+      {title: "Effects of Post-Exercise Heat Exposure on Acute Recovery and Training-Induced Performance Adaptations: A Systematic Review", url: "https://link.springer.com/article/10.1186/s40798-025-00910-0"},
+    ],
+  },
+  {
+    id: "rec-easy-pool-swim",
+    category: "Swimming / water-based recovery",
+    name: "Easy Pool Swim",
+    summary: "A relaxed, easy-paced swim (or water walking) done on a rest day or the day after a hard session.",
+    howTo: "15–25 minutes of continuous easy swimming or water walking, well below race/training pace, focused on smooth technique rather than effort.",
+    evidence: "A study on in-water passive recovery in adolescent swimmers found that resting in water between hard swim efforts led to a lower peak heart rate on later reps compared with resting out of the water, and more than 60% of swimmers were faster on their final rep after in-water recovery — though blood lactate levels didn't differ between in-water and out-of-water recovery, suggesting the benefit is more about water's cardiovascular effect than about clearing lactate any faster.",
+    cautions: "",
+    sources: [
+      {title: "Effects of In-Water Passive Recovery on Sprint Swimming Performance and Heart Rate in Adolescent Swimmers", url: "https://pmc.ncbi.nlm.nih.gov/articles/PMC4234968/"},
+    ],
+  },
+  {
+    id: "rec-aqua-jogging",
+    category: "Swimming / water-based recovery",
+    name: "Aqua Jogging / Deep-Water Running",
+    summary: "Running motion performed in deep water, often with a flotation belt, taking impact off the joints while still moving the legs through a running pattern.",
+    howTo: "15–30 minutes at an easy-to-moderate effort, upright posture, focusing on a natural running motion rather than just treading water.",
+    evidence: "This sits within the same in-water active-recovery evidence as easy pool swimming above — water's hydrostatic pressure and buoyancy are believed to support venous return and take load off tissues while still allowing light movement. It's most commonly used and studied as a way to keep training volume up while working around an injury, rather than as its own dedicated recovery-day study.",
+    cautions: "If it's being used to manage load around an injury rather than for general recovery, that's worth coordinating with the client's Rehab plan rather than treating as purely optional.",
+    sources: [
+      {title: "Effects of In-Water Passive Recovery on Sprint Swimming Performance and Heart Rate in Adolescent Swimmers", url: "https://pmc.ncbi.nlm.nih.gov/articles/PMC4234968/"},
+    ],
+  },
+  {
+    id: "rec-passive-float",
+    category: "Swimming / water-based recovery",
+    name: "Passive Float / Water Immersion",
+    summary: "Simply floating or standing relaxed in a pool — no swimming effort — after a hard session.",
+    howTo: "10–15 minutes of calm, relaxed immersion at waist-to-chest depth; no swimming effort required.",
+    evidence: "The same in-water recovery research above found benefits (a lower peak heart rate on subsequent efforts) from being immersed in water at rest, not just from swimming. The proposed mechanism is water's hydrostatic pressure increasing venous return and stroke volume, whether a swimmer is resting or moving gently in the water.",
+    cautions: "This is a milder version of cold water immersion if the pool is genuinely cold — if so, the Hot & Cold Exposure evidence and cautions above apply instead.",
+    sources: [
+      {title: "Effects of In-Water Passive Recovery on Sprint Swimming Performance and Heart Rate in Adolescent Swimmers", url: "https://pmc.ncbi.nlm.nih.gov/articles/PMC4234968/"},
+    ],
+  },
+];
+
+function buildRecoveryCard(item){
+  const card = document.createElement("div");
+  card.className = "card recoverycard";
+  card.innerHTML = `
+    <div class="cardhead">
+      <h3>${esc(item.name)}</h3>
+    </div>
+    <div class="tagrow">
+      <span class="tag region">${esc(item.category)}</span>
+    </div>
+    <div class="detail"><b>What it is</b>${esc(item.summary)}</div>
+    <div class="detail"><b>How to do it</b>${esc(item.howTo)}</div>
+    <div class="detail"><b>What the evidence says</b>${esc(item.evidence)}</div>
+    ${item.cautions ? `<div class="detail"><b>Worth knowing</b>${esc(item.cautions)}</div>` : ""}
+  `;
+  const sourcesWrap = document.createElement("div");
+  sourcesWrap.className = "recoverysources";
+  const label = document.createElement("div");
+  label.className = "recoverysourceslabel";
+  label.textContent = "Sources";
+  sourcesWrap.appendChild(label);
+  item.sources.forEach(src => {
+    const a = document.createElement("a");
+    a.href = src.url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.className = "recoverysourcelink";
+    a.textContent = src.title;
+    sourcesWrap.appendChild(a);
+  });
+  card.appendChild(sourcesWrap);
+  return card;
+}
+
+// Builds one fully self-contained Recovery Library component (search box +
+// category chips + card grid). Every bit of filter state lives in this
+// function's own closure rather than a module-level variable, so mounting
+// it a second time (e.g. inside a client's own portal pill, alongside the
+// coach's own Recovery tab) never shares or clobbers state between the two.
+function buildRecoveryLibrary(){
+  const wrap = document.createElement("div");
+  wrap.className = "recoverylibrary";
+  let query = "";
+  let activeCategory = null;
+
+  const intro = document.createElement("p");
+  intro.className = "sub";
+  intro.style.marginTop = "0";
+  intro.textContent = "A browsable reference of evidence-based recovery options — nothing here gets added to a training or rehab plan, it's just something to draw on.";
+  wrap.appendChild(intro);
+
+  const searchRow = document.createElement("div");
+  searchRow.className = "searchrow";
+  searchRow.innerHTML = `
+    <label class="search">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="text" placeholder="Search recovery modalities…" autocomplete="off">
+    </label>
+  `;
+  wrap.appendChild(searchRow);
+
+  const facetsEl = document.createElement("div");
+  facetsEl.className = "facets";
+  wrap.appendChild(facetsEl);
+
+  const statusEl = document.createElement("div");
+  statusEl.className = "status";
+  wrap.appendChild(statusEl);
+
+  const resultsEl = document.createElement("div");
+  wrap.appendChild(resultsEl);
+
+  function matchesQuery(item){
+    if(!query) return true;
+    const hay = (item.name + " " + item.category + " " + item.summary).toLowerCase();
+    return hay.includes(query);
+  }
+
+  function draw(){
+    facetsEl.innerHTML = "";
+    const div = document.createElement("div");
+    div.className = "facet";
+    const label = document.createElement("div");
+    label.className = "facet-label";
+    label.innerHTML = `<span class="step">1</span> Category`;
+    div.appendChild(label);
+    const pillsWrap = document.createElement("div");
+    pillsWrap.className = "pills";
+    RECOVERY_CATEGORIES.forEach(cat => {
+      const count = RECOVERY_DATA.filter(it => it.category === cat && matchesQuery(it)).length;
+      const isActive = activeCategory === cat;
+      const btn = document.createElement("button");
+      btn.className = "pill" + (isActive ? " active" : "") + (count === 0 && !isActive ? " zero" : "");
+      btn.innerHTML = `${esc(cat)} <span class="count">${count}</span>`;
+      btn.onclick = () => { activeCategory = isActive ? null : cat; draw(); };
+      pillsWrap.appendChild(btn);
+    });
+    div.appendChild(pillsWrap);
+    facetsEl.appendChild(div);
+
+    const items = RECOVERY_DATA.filter(it => (!activeCategory || it.category === activeCategory) && matchesQuery(it));
+    statusEl.textContent = items.length + (items.length === 1 ? " modality matches" : " modalities match");
+    resultsEl.innerHTML = "";
+    if(!items.length){
+      resultsEl.innerHTML = `<div class="empty">No recovery modalities match that search. Try clearing the filter.</div>`;
+      return;
+    }
+    const grid = document.createElement("div");
+    grid.className = "grid";
+    items.forEach(it => grid.appendChild(buildRecoveryCard(it)));
+    resultsEl.appendChild(grid);
+  }
+
+  searchRow.querySelector("input").addEventListener("input", e => {
+    query = e.target.value.trim().toLowerCase();
+    draw();
+  });
+
+  draw();
+  return wrap;
+}
+
+/* ---------------------------------------------------------------------
    Program Builder
 --------------------------------------------------------------------- */
 
@@ -736,6 +1053,7 @@ const tabBtns = {
   library: document.getElementById("tabbtn-library"),
   builder: document.getElementById("tabbtn-builder"),
   rehab: document.getElementById("tabbtn-rehab"),
+  recovery: document.getElementById("tabbtn-recovery"),
   nutrition: document.getElementById("tabbtn-nutrition"),
   clients: document.getElementById("tabbtn-clients"),
   messages: document.getElementById("tabbtn-messages"),
@@ -746,6 +1064,7 @@ const tabPanels = {
   library: document.getElementById("tabpanel-library"),
   builder: document.getElementById("tabpanel-builder"),
   rehab: document.getElementById("tabpanel-rehab"),
+  recovery: document.getElementById("tabpanel-recovery"),
   nutrition: document.getElementById("tabpanel-nutrition"),
   clients: document.getElementById("tabpanel-clients"),
   messages: document.getElementById("tabpanel-messages"),
@@ -757,6 +1076,7 @@ const SUBS = {
   library: "Pick a muscle group or training quality, then narrow by sub-region, plane of movement, or pattern — the exercises and their details fill in as you go.",
   builder: "Build training programs straight from the library — add exercises to a day and their muscle, plane and pattern details come with them.",
   rehab: "Log what a physio has flagged for a client, then browse the library narrowed to that area to build a rehab plan.",
+  recovery: "A browsable, evidence-based reference for recovery modalities — gentle movement, walking, hot & cold exposure, and swimming. Nothing here gets scheduled into a program; it's just a shared resource for you and your clients.",
   nutrition: "Build calorie and macro targets from a client's stats, then lay out meals against them — link a client to pull their numbers in automatically.",
   clients: "One place per client — their info and goals alongside every program, rehab case and nutrition plan built for them.",
   messages: "Chat with your clients right from the app — no phone number needed on either side.",
@@ -770,6 +1090,7 @@ let rehabInited = false;
 let rehabInitPromise = null;
 let rehabReadyResolve = null;
 let clientsTabInited = false;
+let recoveryInited = false;
 let nutritionInited = false;
 let messagesInited = false;
 let enquiriesInited = false;
@@ -836,6 +1157,10 @@ function showTab(name){
   if(name === "rehab"){
     ensureRehabInited();
   }
+  if(name === "recovery" && !recoveryInited){
+    recoveryInited = true;
+    document.getElementById("recoveryHost").appendChild(buildRecoveryLibrary());
+  }
   if(name === "nutrition" && !nutritionInited){
     nutritionInited = true;
     initNutrition();
@@ -875,6 +1200,7 @@ function goToClientProfile(clientId){
 tabBtns.library.addEventListener("click", () => showTab("library"));
 tabBtns.builder.addEventListener("click", () => showTab("builder"));
 tabBtns.rehab.addEventListener("click", () => showTab("rehab"));
+tabBtns.recovery.addEventListener("click", () => showTab("recovery"));
 tabBtns.nutrition.addEventListener("click", () => showTab("nutrition"));
 tabBtns.clients.addEventListener("click", () => showTab("clients"));
 tabBtns.messages.addEventListener("click", () => showTab("messages"));
@@ -6506,6 +6832,15 @@ function renderClientModeView(){
         }
       }, "cmnestedpill"));
     }
+  }));
+
+  // Recovery -- the same evidence-based, browsable reference library the
+  // coach has under her own Recovery tab. It's a static, shared resource
+  // (not personalised per client, and never scheduled into a plan), so it
+  // shows for every client rather than being gated behind a visibility
+  // toggle like Training/Rehab/Nutrition above.
+  host.appendChild(buildCmPill("Recovery", () => cmRecoveryOpen, v => { cmRecoveryOpen = v; }, body => {
+    body.appendChild(buildRecoveryLibrary());
   }));
 
   // Messages -- a direct line to the coach, right in the app. No unread
