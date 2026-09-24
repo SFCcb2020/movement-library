@@ -1183,6 +1183,91 @@ function showTab(name){
     enquiriesInited = true;
     initEnquiries();
   }
+  if(coachBottomNav) coachBottomNav.setActive(name);
+}
+
+// Simple, consistent stroke-icon set (24x24, currentColor) shared between
+// the coach's own bottom nav and the client portal's -- one place to tweak
+// the look of every nav icon rather than duplicating markup per instance.
+const NAV_ICONS = {
+  library: '<line x1="6" y1="12" x2="18" y2="12"/><rect x="3" y="9" width="3" height="6" rx="1"/><rect x="18" y="9" width="3" height="6" rx="1"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="18" y1="10" x2="18" y2="14"/>',
+  builder: '<rect x="5" y="4" width="14" height="17" rx="2"/><rect x="9" y="2" width="6" height="4" rx="1"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="16" y2="15"/>',
+  rehab: '<path d="M12 20s-7-4.4-9.5-8.6C.8 8.1 1.6 4.6 4.6 3.2c2.3-1 4.8-.2 7.4 3 2.6-3.2 5.1-4 7.4-3 3 1.4 3.8 4.9 2.1 8.2C19 15.6 12 20 12 20z"/>',
+  recovery: '<path d="M12 3c3.5 4.2 6 7.7 6 10.5A6 6 0 0 1 6 13.5C6 10.7 8.5 7.2 12 3z"/>',
+  nutrition: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/>',
+  clients: '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.9 2.7-6 6-6s6 2.1 6 6"/><circle cx="17.5" cy="9" r="2.3"/><path d="M15 20c.2-2.8 1.8-4.5 4-4.5s3.6 1.6 4 4.2"/>',
+  messages: '<path d="M4 5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/>',
+  enquiries: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
+  notifications: '<path d="M6 10a6 6 0 0 1 12 0c0 4 1.5 6 2 7H4c.5-1 2-3 2-7z"/><path d="M9.5 19a2.5 2.5 0 0 0 5 0"/>',
+  home: '<path d="M4 11.5 12 4l8 7.5"/><path d="M6 10v9a1 1 0 0 0 1 1h4v-6h2v6h4a1 1 0 0 0 1-1v-9"/>',
+};
+
+// Builds a fixed, icon-based bottom navigation bar -- the mobile "app feel"
+// stand-in for a row of text tabs. Used both for the coach's own 9-item nav
+// (mounted once into #coachBottomNav) and the client portal's smaller
+// 4-item nav (rebuilt fresh on every renderClientModeView(), same as
+// everything else in that view). Returns the element plus a couple of
+// small handles callers need: setActive to sync the highlighted item with
+// whatever navigation state already exists (showTab, or a scrolled-to
+// pill), and btns so badge counts (unread messages, new enquiries, etc.)
+// can be mirrored onto the matching icon exactly like the top tab bar
+// already does.
+function buildBottomNav(items, onSelect){
+  const nav = document.createElement("nav");
+  nav.className = "bottomnav";
+  const btns = {};
+  items.forEach(item => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "bottomnavbtn";
+    btn.innerHTML = `<svg class="bottomnavicon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${item.icon}</svg><span>${esc(item.label)}</span>`;
+    btn.addEventListener("click", () => onSelect(item.key));
+    nav.appendChild(btn);
+    btns[item.key] = btn;
+  });
+  function setActive(key){
+    Object.keys(btns).forEach(k => btns[k].classList.toggle("active", k === key));
+  }
+  return {el: nav, btns, setActive};
+}
+
+// Adds/updates/removes the same small unread-count pill used on the top
+// tab bar (see updateMessagesTabBadge/updateEnquiriesTabBadge/
+// updateNotificationsTabBadge below), so a badge shown there is mirrored
+// onto the bottom nav's matching icon too rather than only ever being
+// visible on desktop.
+function applyUnreadBadge(el, count){
+  if(!el) return;
+  let badge = el.querySelector(".msgunreadbadge");
+  if(count > 0){
+    if(!badge){
+      badge = document.createElement("span");
+      badge.className = "msgunreadbadge";
+      el.appendChild(badge);
+    }
+    badge.textContent = String(count);
+  } else if(badge){
+    badge.remove();
+  }
+}
+
+const COACH_NAV_ITEMS = [
+  {key: "library", label: "Library", icon: NAV_ICONS.library},
+  {key: "builder", label: "Builder", icon: NAV_ICONS.builder},
+  {key: "rehab", label: "Rehab", icon: NAV_ICONS.rehab},
+  {key: "recovery", label: "Recovery", icon: NAV_ICONS.recovery},
+  {key: "nutrition", label: "Nutrition", icon: NAV_ICONS.nutrition},
+  {key: "clients", label: "Squad", icon: NAV_ICONS.clients},
+  {key: "messages", label: "Messages", icon: NAV_ICONS.messages},
+  {key: "enquiries", label: "Enquiries", icon: NAV_ICONS.enquiries},
+  {key: "notifications", label: "Alerts", icon: NAV_ICONS.notifications},
+];
+let coachBottomNav = null;
+const coachBottomNavHost = document.getElementById("coachBottomNav");
+if(coachBottomNavHost){
+  coachBottomNav = buildBottomNav(COACH_NAV_ITEMS, key => showTab(key));
+  coachBottomNavHost.appendChild(coachBottomNav.el);
+  coachBottomNav.setActive("library");
 }
 
 // Jumps to THE SQUAD tab with a specific client's profile already selected
@@ -5522,9 +5607,10 @@ function buildGoalItemRow(client, g, dateKey){
 // "cmnestedpill") styles a pill nested inside another pill (Today's
 // Agenda / Training Plan / Rehab living inside The Road Map) a little
 // smaller/flatter than a top-level one.
-function buildCmPill(title, getOpen, setOpen, fill, extraClass){
+function buildCmPill(title, getOpen, setOpen, fill, extraClass, id){
   const details = document.createElement("details");
   details.className = "cmpill" + (extraClass ? " " + extraClass : "");
+  if(id) details.id = id;
   details.open = getOpen();
   details.addEventListener("toggle", () => { setOpen(details.open); });
   const summary = document.createElement("summary");
@@ -6736,6 +6822,32 @@ function renderClientModeView(){
   header.innerHTML = `<h2>Welcome, ${esc(firstNameOf(client) || "there")}</h2><span class="savebadge" id="cmSaveStatus"></span><button class="cmlogout" id="cmLogoutBtn" type="button">Log out</button>`;
   host.appendChild(header);
 
+  // A small, app-like bottom nav for jumping straight to a section instead
+  // of scrolling past everything else -- rebuilt fresh on every call here,
+  // same as the rest of this view, since it's cheap and keeps its unread
+  // badge in sync with whatever just changed. Each item just opens (if
+  // it's closed) and scrolls to the matching pill by id; the pill's own
+  // existing toggle listener (see buildCmPill) picks up the state change
+  // on its own, so nothing else needs to know about this nav.
+  const myUnread = messagesCache.filter(m => m.clientId === client.id && m.sender === "coach" && !m.readByClient).length;
+  const clientNav = buildBottomNav([
+    {key: "home", label: "Home", icon: NAV_ICONS.home},
+    {key: "cmRoadMapPill", label: "Plan", icon: NAV_ICONS.builder},
+    {key: "cmRecoveryPill", label: "Recovery", icon: NAV_ICONS.recovery},
+    {key: "cmMessagesPill", label: "Messages", icon: NAV_ICONS.messages},
+  ], key => {
+    if(key === "home"){
+      window.scrollTo({top: 0, behavior: "smooth"});
+      return;
+    }
+    const pill = document.getElementById(key);
+    if(!pill) return;
+    if(!pill.open) pill.open = true;
+    if(pill.scrollIntoView) pill.scrollIntoView({behavior: "smooth", block: "start"});
+  });
+  applyUnreadBadge(clientNav.btns.cmMessagesPill, myUnread);
+  host.appendChild(clientNav.el);
+
   const trainingOn = client.visibility.training !== false;
   const rehabOn = client.visibility.rehab !== false;
   const nutritionOn = client.visibility.nutrition !== false;
@@ -6754,7 +6866,7 @@ function renderClientModeView(){
   host.appendChild(buildCmPill("Personal Stats", () => cmPersonalStatsOpen, v => { cmPersonalStatsOpen = v; }, body => {
     body.appendChild(buildClientBodyMetrics(client));
     body.appendChild(buildClientStatsView(client));
-  }));
+  }, null, "cmPersonalStatsPill"));
 
   // Big Picture Goals -- the client's own free-text goals, visible to the
   // coach too.
@@ -6832,7 +6944,7 @@ function renderClientModeView(){
         }
       }, "cmnestedpill"));
     }
-  }));
+  }, null, "cmRoadMapPill"));
 
   // Recovery -- the same evidence-based, browsable reference library the
   // coach has under her own Recovery tab. It's a static, shared resource
@@ -6841,18 +6953,18 @@ function renderClientModeView(){
   // toggle like Training/Rehab/Nutrition above.
   host.appendChild(buildCmPill("Recovery", () => cmRecoveryOpen, v => { cmRecoveryOpen = v; }, body => {
     body.appendChild(buildRecoveryLibrary());
-  }));
+  }, null, "cmRecoveryPill"));
 
   // Messages -- a direct line to the coach, right in the app. No unread
   // count in the title unless there's something new, so the pill reads the
-  // same as every other one until it actually needs attention.
-  const myUnread = messagesCache.filter(m => m.clientId === client.id && m.sender === "coach" && !m.readByClient).length;
+  // same as every other one until it actually needs attention. (myUnread
+  // was already computed above, for the bottom nav's own badge.)
   host.appendChild(buildCmPill(myUnread ? `Messages (${myUnread} new)` : "Messages", () => cmMessagesOpen, v => {
     cmMessagesOpen = v;
     if(v) markClientMessagesRead(client);
   }, body => {
     body.appendChild(buildClientMessagesPanel(client));
-  }));
+  }, null, "cmMessagesPill"));
 
   document.getElementById("cmLogoutBtn").addEventListener("click", () => {
     clientSession = null;
@@ -8005,17 +8117,8 @@ function updateNotificationsTabBadge(){
   const btn = tabBtns.notifications;
   if(!btn) return;
   const count = notificationEntries().filter(n => !n.entry.seenByCoach).length;
-  let badge = btn.querySelector(".msgunreadbadge");
-  if(count > 0){
-    if(!badge){
-      badge = document.createElement("span");
-      badge.className = "msgunreadbadge";
-      btn.appendChild(badge);
-    }
-    badge.textContent = count;
-  } else if(badge){
-    badge.remove();
-  }
+  applyUnreadBadge(btn, count);
+  if(coachBottomNav) applyUnreadBadge(coachBottomNav.btns.notifications, count);
 }
 
 // Marks one note as read -- a narrow, targeted update (just this one
@@ -8117,17 +8220,8 @@ function updateMessagesTabBadge(){
   const btn = tabBtns.messages;
   if(!btn) return;
   const count = messagesCache.filter(m => m.sender === "client" && !m.readByCoach).length;
-  let badge = btn.querySelector(".msgunreadbadge");
-  if(count > 0){
-    if(!badge){
-      badge = document.createElement("span");
-      badge.className = "msgunreadbadge";
-      btn.appendChild(badge);
-    }
-    badge.textContent = String(count);
-  } else if(badge){
-    badge.remove();
-  }
+  applyUnreadBadge(btn, count);
+  if(coachBottomNav) applyUnreadBadge(coachBottomNav.btns.messages, count);
 }
 
 async function initMessages(){
@@ -8574,17 +8668,8 @@ function updateEnquiriesTabBadge(){
   const btn = tabBtns.enquiries;
   if(!btn) return;
   const count = enquiriesCache.filter(e => (e.status || "new") === "new").length;
-  let badge = btn.querySelector(".msgunreadbadge");
-  if(count > 0){
-    if(!badge){
-      badge = document.createElement("span");
-      badge.className = "msgunreadbadge";
-      btn.appendChild(badge);
-    }
-    badge.textContent = String(count);
-  } else if(badge){
-    badge.remove();
-  }
+  applyUnreadBadge(btn, count);
+  if(coachBottomNav) applyUnreadBadge(coachBottomNav.btns.enquiries, count);
 }
 
 function enquiryStatusLabel(status){
