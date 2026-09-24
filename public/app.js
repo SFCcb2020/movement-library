@@ -718,105 +718,215 @@ function resolveMuscleTokens(str){
 }
 
 /* ---------------------------------------------------------------------
-   Simple body-highlight diagrams for the Anatomy section: a plain
-   standing-figure outline (front and back views share the same outline
-   -- only the highlighted region differs) with an oval roughly over
-   where each muscle sits. Deliberately schematic rather than a precise
-   anatomical trace -- it just gives a quick "roughly where is this"
-   visual to sit alongside the origin/insertion/action text above.
-   Coordinates are in a shared 0-120 x 0-260 viewBox.
+   Anatomy section body diagrams: a simplified bone/joint schematic for
+   the relevant region (leg, arm, or torso), marking roughly where a
+   muscle originates and inserts and banding a highlight between them.
+   For the handful of umbrella entries with no origin/insertion text
+   (core, neckMuscles, shoulders, upperBack, hips), it just highlights
+   the general area instead of pinning O/I points that don't exist.
+   Deliberately a stylized schematic -- capsule-shaped "bones" and
+   round joints, not a realistic trace -- so it stays simple, clear
+   and consistent across all 35 muscles rather than attempting
+   textbook-grade anatomical art. Coordinates are per-region viewBoxes.
 --------------------------------------------------------------------- */
-const ANATOMY_SILHOUETTE_PATHS = [
-  { tag: "circle", attrs: { cx: "60", cy: "20", r: "14" } },
-  { tag: "path", attrs: { d: "M53,32 L53,42 L67,42 L67,32" } },
-  { tag: "path", attrs: { d: "M33,48 C33,44 40,42 53,42 L67,42 C80,42 87,44 87,48 L84,108 C83,118 82,124 83,132 L37,132 C38,124 37,118 36,108 Z" } },
-  { tag: "path", attrs: { d: "M33,48 C25,52 20,60 18,72 L14,138 C13.5,142 15,145 18,145 C21,145 22,142 22.5,138 L27,80 L30,60" } },
-  { tag: "path", attrs: { d: "M87,48 C95,52 100,60 102,72 L106,138 C106.5,142 105,145 102,145 C99,145 98,142 97.5,138 L93,80 L90,60" } },
-  { tag: "path", attrs: { d: "M37,132 L36,150 C35,175 35,200 38,225 L40,248 C40.2,251 42,252.5 44,252.5 C46,252.5 47,251 47,248 L48,224 C49,205 50,185 51,166 L52,136" } },
-  { tag: "path", attrs: { d: "M83,132 L84,150 C85,175 85,200 82,225 L80,248 C79.8,251 78,252.5 76,252.5 C74,252.5 73,251 73,248 L72,224 C71,205 70,185 69,166 L68,136" } },
-];
+const BONE_REGIONS = {
+  leg: {
+    viewBox: "0 0 140 300",
+    bones: [
+      { tag: "line", attrs: { x1: "34", y1: "20", x2: "90", y2: "20" } },
+      { tag: "line", attrs: { x1: "62", y1: "30", x2: "60", y2: "185" } },
+      { tag: "line", attrs: { x1: "61", y1: "200", x2: "60", y2: "278" } },
+      { tag: "line", attrs: { x1: "60", y1: "286", x2: "95", y2: "286" } },
+    ],
+    joints: [
+      { cx: 62, cy: 28, r: 8 },
+      { cx: 61, cy: 192, r: 8 },
+      { cx: 61, cy: 282, r: 6 },
+    ],
+  },
+  arm: {
+    viewBox: "0 0 140 300",
+    bones: [
+      { tag: "line", attrs: { x1: "35", y1: "22", x2: "72", y2: "16" } },
+      { tag: "line", attrs: { x1: "72", y1: "16", x2: "85", y2: "46" } },
+      { tag: "line", attrs: { x1: "80", y1: "52", x2: "75", y2: "165" } },
+      { tag: "line", attrs: { x1: "78", y1: "178", x2: "83", y2: "252" } },
+      { tag: "line", attrs: { x1: "70", y1: "178", x2: "67", y2: "252" } },
+      { tag: "line", attrs: { x1: "70", y1: "260", x2: "88", y2: "266" } },
+    ],
+    joints: [
+      { cx: 80, cy: 50, r: 8 },
+      { cx: 74, cy: 171, r: 7 },
+      { cx: 75, cy: 256, r: 6 },
+    ],
+  },
+  torso: {
+    viewBox: "0 0 200 260",
+    bones: [
+      { tag: "line", attrs: { x1: "100", y1: "8", x2: "100", y2: "34" } },
+      { tag: "path", attrs: { d: "M100,34 C74,38 62,56 62,78 C62,100 66,120 72,136", fill: "none" } },
+      { tag: "path", attrs: { d: "M100,34 C126,38 138,56 138,78 C138,100 134,120 128,136", fill: "none" } },
+      { tag: "line", attrs: { x1: "100", y1: "34", x2: "100", y2: "204" } },
+      { tag: "line", attrs: { x1: "100", y1: "42", x2: "100", y2: "106" } },
+      { tag: "line", attrs: { x1: "70", y1: "40", x2: "97", y2: "30" } },
+      { tag: "line", attrs: { x1: "130", y1: "40", x2: "103", y2: "30" } },
+      { tag: "line", attrs: { x1: "70", y1: "42", x2: "84", y2: "70" } },
+      { tag: "line", attrs: { x1: "130", y1: "42", x2: "116", y2: "70" } },
+      { tag: "line", attrs: { x1: "80", y1: "50", x2: "62", y2: "92" } },
+      { tag: "line", attrs: { x1: "120", y1: "50", x2: "138", y2: "92" } },
+      { tag: "line", attrs: { x1: "62", y1: "168", x2: "138", y2: "168" } },
+      { tag: "line", attrs: { x1: "70", y1: "168", x2: "100", y2: "206" } },
+      { tag: "line", attrs: { x1: "130", y1: "168", x2: "100", y2: "206" } },
+    ],
+    joints: [
+      { cx: 80, cy: 50, r: 6 },
+      { cx: 120, cy: 50, r: 6 },
+    ],
+  },
+};
 
-const MUSCLE_DIAGRAMS = {
-  quadriceps: { view: "front", regions: [{ cx: 44, cy: 163, rx: 7.5, ry: 27 }, { cx: 76, cy: 163, rx: 7.5, ry: 27 }] },
-  hamstrings: { view: "back", regions: [{ cx: 44, cy: 163, rx: 7.5, ry: 27 }, { cx: 76, cy: 163, rx: 7.5, ry: 27 }] },
-  gluteusMax: { view: "back", regions: [{ cx: 60, cy: 138, rx: 24, ry: 13 }] },
-  gluteusMed: { view: "back", regions: [{ cx: 39, cy: 126, rx: 6, ry: 8 }, { cx: 81, cy: 126, rx: 6, ry: 8 }] },
-  gluteusMin: { view: "back", regions: [{ cx: 37, cy: 122, rx: 4, ry: 6 }, { cx: 83, cy: 122, rx: 4, ry: 6 }] },
-  adductors: { view: "front", regions: [{ cx: 51, cy: 160, rx: 5, ry: 24 }, { cx: 69, cy: 160, rx: 5, ry: 24 }] },
-  hipFlexors: { view: "front", regions: [{ cx: 47, cy: 134, rx: 6, ry: 8 }, { cx: 73, cy: 134, rx: 6, ry: 8 }] },
-  calves: { view: "back", regions: [{ cx: 45, cy: 208, rx: 6.5, ry: 18 }, { cx: 75, cy: 208, rx: 6.5, ry: 18 }] },
-  tibialisAnterior: { view: "front", regions: [{ cx: 45.5, cy: 214, rx: 4, ry: 15 }, { cx: 74.5, cy: 214, rx: 4, ry: 15 }] },
-  erectorSpinae: { view: "back", regions: [{ cx: 60, cy: 90, rx: 6, ry: 45 }] },
-  quadratusLumborum: { view: "back", regions: [{ cx: 47, cy: 117, rx: 6, ry: 10 }, { cx: 73, cy: 117, rx: 6, ry: 10 }] },
-  rectusAbdominis: { view: "front", regions: [{ cx: 60, cy: 92, rx: 11, ry: 28 }] },
-  obliques: { view: "front", regions: [{ cx: 41, cy: 92, rx: 6, ry: 22 }, { cx: 79, cy: 92, rx: 6, ry: 22 }] },
-  transverseAbdominis: { view: "front", regions: [{ cx: 60, cy: 98, rx: 19, ry: 22 }] },
-  core: { view: "front", regions: [{ cx: 60, cy: 96, rx: 23, ry: 36 }] },
-  latissimusDorsi: { view: "back", regions: [{ cx: 39, cy: 92, rx: 9, ry: 28 }, { cx: 81, cy: 92, rx: 9, ry: 28 }] },
-  trapezius: { view: "back", regions: [{ cx: 60, cy: 54, rx: 25, ry: 18 }] },
-  rhomboids: { view: "back", regions: [{ cx: 60, cy: 68, rx: 11, ry: 13 }] },
-  levatorScapulae: { view: "back", regions: [{ cx: 48, cy: 48, rx: 4, ry: 9 }, { cx: 72, cy: 48, rx: 4, ry: 9 }] },
-  pectoralis: { view: "front", regions: [{ cx: 46, cy: 57, rx: 10.5, ry: 11 }, { cx: 74, cy: 57, rx: 10.5, ry: 11 }] },
-  anteriorDeltoid: { view: "front", regions: [{ cx: 35, cy: 48, rx: 6, ry: 8 }, { cx: 85, cy: 48, rx: 6, ry: 8 }] },
-  lateralDeltoid: { view: "front", regions: [{ cx: 28, cy: 54, rx: 6, ry: 9 }, { cx: 92, cy: 54, rx: 6, ry: 9 }] },
-  posteriorDeltoid: { view: "back", regions: [{ cx: 32, cy: 50, rx: 6.5, ry: 8 }, { cx: 88, cy: 50, rx: 6.5, ry: 8 }] },
-  rotatorCuff: { view: "back", regions: [{ cx: 41, cy: 55, rx: 6, ry: 8 }, { cx: 79, cy: 55, rx: 6, ry: 8 }] },
-  bicepsBrachii: { view: "front", regions: [{ cx: 25, cy: 68, rx: 6, ry: 16 }, { cx: 95, cy: 68, rx: 6, ry: 16 }] },
-  tricepsBrachii: { view: "back", regions: [{ cx: 25, cy: 68, rx: 6, ry: 16 }, { cx: 95, cy: 68, rx: 6, ry: 16 }] },
-  brachialis: { view: "front", regions: [{ cx: 22, cy: 86, rx: 5, ry: 10 }, { cx: 98, cy: 86, rx: 5, ry: 10 }] },
-  brachioradialis: { view: "front", regions: [{ cx: 18, cy: 104, rx: 5, ry: 12 }, { cx: 102, cy: 104, rx: 5, ry: 12 }] },
-  forearms: { view: "front", regions: [{ cx: 16, cy: 116, rx: 6, ry: 24 }, { cx: 104, cy: 116, rx: 6, ry: 24 }] },
-  tfl: { view: "front", regions: [{ cx: 35, cy: 128, rx: 5, ry: 8 }, { cx: 85, cy: 128, rx: 5, ry: 8 }] },
-  deepHipRotators: { view: "back", regions: [{ cx: 53, cy: 141, rx: 5, ry: 7 }, { cx: 67, cy: 141, rx: 5, ry: 7 }] },
-  neckMuscles: { view: "front", regions: [{ cx: 60, cy: 38, rx: 9, ry: 7 }] },
-  shoulders: { view: "front", regions: [{ cx: 33, cy: 50, rx: 10, ry: 12 }, { cx: 87, cy: 50, rx: 10, ry: 12 }] },
-  upperBack: { view: "back", regions: [{ cx: 60, cy: 74, rx: 30, ry: 30 }] },
-  hips: { view: "front", regions: [{ cx: 60, cy: 130, rx: 28, ry: 18 }] },
+const MUSCLE_JOINT_DIAGRAMS = {
+  quadriceps: { region: "leg", origin: { x: 50, y: 22 }, insertion: { x: 61, y: 206 } },
+  hamstrings: { region: "leg", origin: { x: 75, y: 24 }, insertion: { x: 72, y: 204 } },
+  gluteusMax: { region: "leg", origin: { x: 40, y: 18 }, insertion: { x: 58, y: 90 } },
+  gluteusMed: { region: "leg", origin: { x: 45, y: 16 }, insertion: { x: 63, y: 45 } },
+  gluteusMin: { region: "leg", origin: { x: 48, y: 17 }, insertion: { x: 64, y: 42 } },
+  adductors: { region: "leg", origin: { x: 65, y: 24 }, insertion: { x: 58, y: 140 } },
+  hipFlexors: { region: "leg", origin: { x: 55, y: 15 }, insertion: { x: 66, y: 50 } },
+  calves: { region: "leg", origin: { x: 61, y: 190 }, insertion: { x: 75, y: 286 } },
+  tibialisAnterior: { region: "leg", origin: { x: 66, y: 205 }, insertion: { x: 65, y: 288 } },
+  tfl: { region: "leg", origin: { x: 38, y: 17 }, insertion: { x: 72, y: 110 } },
+  deepHipRotators: { region: "leg", origin: { x: 70, y: 20 }, insertion: { x: 64, y: 44 } },
+  hips: { region: "leg", highlight: { cx: 61, cy: 62, rx: 30, ry: 48 } },
+  anteriorDeltoid: { region: "arm", origin: { x: 50, y: 19 }, insertion: { x: 77, y: 110 } },
+  lateralDeltoid: { region: "arm", origin: { x: 80, y: 20 }, insertion: { x: 76, y: 108 } },
+  posteriorDeltoid: { region: "arm", origin: { x: 83, y: 35 }, insertion: { x: 75, y: 106 } },
+  rotatorCuff: { region: "arm", origin: { x: 83, y: 30 }, insertion: { x: 79, y: 58 } },
+  bicepsBrachii: { region: "arm", origin: { x: 78, y: 20 }, insertion: { x: 81, y: 180 } },
+  tricepsBrachii: { region: "arm", origin: { x: 83, y: 40 }, insertion: { x: 69, y: 175 } },
+  brachialis: { region: "arm", origin: { x: 76, y: 140 }, insertion: { x: 69, y: 182 } },
+  brachioradialis: { region: "arm", origin: { x: 79, y: 150 }, insertion: { x: 83, y: 248 } },
+  forearms: { region: "arm", origin: { x: 75, y: 168 }, insertion: { x: 75, y: 262 } },
+  rectusAbdominis: { region: "torso", origin: { x: 100, y: 198 }, insertion: { x: 100, y: 92 } },
+  obliques: { region: "torso", origin: { x: 68, y: 122 }, insertion: { x: 76, y: 172 } },
+  transverseAbdominis: { region: "torso", origin: { x: 64, y: 148 }, insertion: { x: 100, y: 148 } },
+  core: { region: "torso", highlight: { cx: 100, cy: 140, rx: 34, ry: 56 } },
+  erectorSpinae: { region: "torso", origin: { x: 92, y: 188 }, insertion: { x: 92, y: 50 } },
+  quadratusLumborum: { region: "torso", origin: { x: 68, y: 165 }, insertion: { x: 70, y: 136 } },
+  latissimusDorsi: { region: "torso", origin: { x: 100, y: 175 }, insertion: { x: 62, y: 90 } },
+  trapezius: { region: "torso", origin: { x: 100, y: 50 }, insertion: { x: 84, y: 68 } },
+  rhomboids: { region: "torso", origin: { x: 100, y: 60 }, insertion: { x: 82, y: 68 } },
+  levatorScapulae: { region: "torso", origin: { x: 100, y: 20 }, insertion: { x: 72, y: 44 } },
+  upperBack: { region: "torso", highlight: { cx: 100, cy: 55, rx: 44, ry: 32 } },
+  neckMuscles: { region: "torso", highlight: { cx: 100, cy: 20, rx: 18, ry: 16 } },
+  pectoralis: { region: "torso", origin: { x: 100, y: 55 }, insertion: { x: 63, y: 90 } },
+  shoulders: { region: "torso", highlight: { cx: 100, cy: 50, rx: 46, ry: 16 } },
 };
 
 function buildMuscleDiagramSVG(key){
-  const d = MUSCLE_DIAGRAMS[key];
+  const d = MUSCLE_JOINT_DIAGRAMS[key];
   if(!d) return null;
+  const region = BONE_REGIONS[d.region];
+  if(!region) return null;
   const svgns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(svgns, "svg");
-  svg.setAttribute("viewBox", "0 0 120 260");
+  svg.setAttribute("viewBox", region.viewBox);
   svg.setAttribute("aria-hidden", "true");
-  const outline = document.createElementNS(svgns, "g");
-  outline.setAttribute("fill", "none");
-  outline.setAttribute("stroke", "var(--ink-dim)");
-  outline.setAttribute("stroke-width", "2.5");
-  outline.setAttribute("stroke-linejoin", "round");
-  outline.setAttribute("stroke-linecap", "round");
-  ANATOMY_SILHOUETTE_PATHS.forEach(p => {
-    const el = document.createElementNS(svgns, p.tag);
-    Object.entries(p.attrs).forEach(([k, v]) => el.setAttribute(k, v));
-    outline.appendChild(el);
+
+  // Bones are drawn twice -- a thick soft-opacity pass for the "capsule"
+  // body shape, then a thin crisp pass on top for a clean edge -- both
+  // using the same coordinates, which is simpler and more reliable than
+  // trying to hand-trace realistic bone silhouettes.
+  const boneSoft = document.createElementNS(svgns, "g");
+  boneSoft.setAttribute("fill", "none");
+  boneSoft.setAttribute("stroke", "var(--ink-dim)");
+  boneSoft.setAttribute("stroke-width", "13");
+  boneSoft.setAttribute("stroke-linecap", "round");
+  boneSoft.setAttribute("stroke-linejoin", "round");
+  boneSoft.setAttribute("opacity", "0.35");
+  const boneCrisp = document.createElementNS(svgns, "g");
+  boneCrisp.setAttribute("fill", "none");
+  boneCrisp.setAttribute("stroke", "var(--ink-dim)");
+  boneCrisp.setAttribute("stroke-width", "1.4");
+  boneCrisp.setAttribute("stroke-linecap", "round");
+  boneCrisp.setAttribute("stroke-linejoin", "round");
+  boneCrisp.setAttribute("opacity", "0.6");
+  region.bones.forEach(b => {
+    [boneSoft, boneCrisp].forEach(g => {
+      const el = document.createElementNS(svgns, b.tag);
+      Object.entries(b.attrs).forEach(([k, v]) => el.setAttribute(k, v));
+      g.appendChild(el);
+    });
   });
-  svg.appendChild(outline);
-  d.regions.forEach(r => {
+  svg.appendChild(boneSoft);
+  svg.appendChild(boneCrisp);
+
+  const jointsG = document.createElementNS(svgns, "g");
+  jointsG.setAttribute("fill", "var(--surface-2)");
+  jointsG.setAttribute("stroke", "var(--ink-dim)");
+  jointsG.setAttribute("stroke-width", "2");
+  jointsG.setAttribute("opacity", "0.9");
+  region.joints.forEach(j => {
+    const el = document.createElementNS(svgns, "circle");
+    el.setAttribute("cx", j.cx); el.setAttribute("cy", j.cy); el.setAttribute("r", j.r);
+    jointsG.appendChild(el);
+  });
+  svg.appendChild(jointsG);
+
+  if(d.highlight){
+    // Umbrella entry (no origin/insertion text) -- just highlight the area.
+    const h = d.highlight;
     const el = document.createElementNS(svgns, "ellipse");
-    el.setAttribute("cx", r.cx); el.setAttribute("cy", r.cy);
-    el.setAttribute("rx", r.rx); el.setAttribute("ry", r.ry);
-    el.setAttribute("fill", "var(--accent)"); el.setAttribute("fill-opacity", "0.55");
-    el.setAttribute("stroke", "var(--accent)"); el.setAttribute("stroke-width", "1.5");
+    el.setAttribute("cx", h.cx); el.setAttribute("cy", h.cy);
+    el.setAttribute("rx", h.rx); el.setAttribute("ry", h.ry);
+    el.setAttribute("fill", "var(--accent)"); el.setAttribute("fill-opacity", "0.3");
+    el.setAttribute("stroke", "var(--accent)"); el.setAttribute("stroke-opacity", "0.6"); el.setAttribute("stroke-width", "1.5");
     svg.appendChild(el);
-  });
+  } else {
+    // A specific muscle -- band the belly between origin and insertion, then
+    // mark each end distinctly (square = origin, dot = insertion) so the
+    // Origin/Insertion fields above have something to point at visually.
+    const o = d.origin, i = d.insertion;
+    const belly = document.createElementNS(svgns, "line");
+    belly.setAttribute("x1", o.x); belly.setAttribute("y1", o.y);
+    belly.setAttribute("x2", i.x); belly.setAttribute("y2", i.y);
+    belly.setAttribute("stroke", "var(--accent)"); belly.setAttribute("stroke-opacity", "0.45");
+    belly.setAttribute("stroke-width", "8"); belly.setAttribute("stroke-linecap", "round");
+    svg.appendChild(belly);
+
+    const originMark = document.createElementNS(svgns, "rect");
+    originMark.setAttribute("x", o.x - 4); originMark.setAttribute("y", o.y - 4);
+    originMark.setAttribute("width", 8); originMark.setAttribute("height", 8);
+    originMark.setAttribute("fill", "var(--accent2)"); originMark.setAttribute("stroke", "var(--ink)"); originMark.setAttribute("stroke-width", "1");
+    svg.appendChild(originMark);
+
+    const insertMark = document.createElementNS(svgns, "circle");
+    insertMark.setAttribute("cx", i.x); insertMark.setAttribute("cy", i.y); insertMark.setAttribute("r", 4.5);
+    insertMark.setAttribute("fill", "var(--accent)"); insertMark.setAttribute("stroke", "var(--ink)"); insertMark.setAttribute("stroke-width", "1");
+    svg.appendChild(insertMark);
+  }
+
   return svg;
 }
 
-// Wraps the diagram SVG with its Front/Back view caption, ready to sit at
-// the top of a muscle card. Returns null when this muscle has no diagram
-// data (keeps the card exactly as before rather than leaving a gap).
+// Wraps the diagram SVG with a small legend (Origin/Insertion swatches for
+// a specific muscle, nothing for an umbrella entry's plain area highlight)
+// ready to sit at the top of a muscle card. Returns null when this muscle
+// has no diagram data (keeps the card exactly as before rather than
+// leaving a gap).
 function buildMuscleDiagramWrap(key){
   const svg = buildMuscleDiagramSVG(key);
   if(!svg) return null;
   const wrap = document.createElement("div");
   wrap.className = "anatomydiagramwrap";
   wrap.appendChild(svg);
-  const label = document.createElement("div");
-  label.className = "anatomydiagramlabel";
-  label.textContent = MUSCLE_DIAGRAMS[key].view === "back" ? "Back view" : "Front view";
-  wrap.appendChild(label);
+  const d = MUSCLE_JOINT_DIAGRAMS[key];
+  if(!d.highlight){
+    const legend = document.createElement("div");
+    legend.className = "anatomydiagramlegend";
+    legend.innerHTML = '<span class="anatomylegendorigin">&#9632;</span> Origin &nbsp; <span class="anatomylegendinsertion">&#9679;</span> Insertion';
+    wrap.appendChild(legend);
+  }
   return wrap;
 }
 
