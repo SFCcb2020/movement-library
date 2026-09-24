@@ -178,15 +178,19 @@ h1{
 .anatomymusclecard{
   background:var(--surface-2); border-radius:8px; padding:10px 12px; overflow:hidden;
 }
-/* Bone/joint schematic: floats beside the name/aka so the card still reads
-   top-to-bottom on a phone once the float clears. Deliberately a plain,
-   stylized schematic rather than a precise anatomical trace -- see the
-   comment above BONE_REGIONS. */
-.anatomydiagramwrap{float:right; width:84px; margin:0 0 8px 10px; text-align:center; flex-shrink:0;}
+/* Bone/joint schematic: sits centered above the name/fields rather than a
+   small floated corner icon, since it's meant to be studied (labeled bones,
+   an actual origin/insertion landmark named below it), not just glanced at.
+   Deliberately a plain, stylized schematic rather than a precise anatomical
+   trace -- see the comment above BONE_REGIONS. */
+.anatomydiagramwrap{width:190px; max-width:100%; margin:0 auto 10px; text-align:center;}
 .anatomydiagramwrap svg{width:100%; height:auto; display:block;}
-.anatomydiagramlegend{font-size:9px; font-weight:600; color:var(--ink-dim); margin-top:2px; line-height:1.5;}
-.anatomylegendorigin{color:var(--accent2); font-size:11px;}
-.anatomylegendinsertion{color:var(--accent); font-size:11px;}
+.anatomydiagramwrap svg .anatomydiagrambonelabel text{
+  font-size:8px; font-weight:600; fill:var(--ink-dim); font-family:inherit;
+}
+.anatomydiagramcaption{font-size:11px; color:var(--ink-dim); margin-top:4px; line-height:1.6; text-align:left;}
+.anatomylegendorigin{color:var(--accent2); font-size:13px;}
+.anatomylegendinsertion{color:var(--accent); font-size:13px;}
 .anatomymusclecard h4{margin:0 0 2px; font-size:13px; font-weight:700; color:var(--ink);}
 .anatomyaka{font-size:11px; font-style:italic; color:var(--ink-dim); margin:0 0 6px;}
 .anatomyfield{font-size:12px; line-height:1.5; color:var(--ink); margin-bottom:5px;}
