@@ -719,201 +719,233 @@ function resolveMuscleTokens(str){
 
 /* ---------------------------------------------------------------------
    Anatomy section body diagrams: a simplified bone/joint schematic for
-   the relevant region (leg, arm, or torso), marking roughly where a
-   muscle originates and inserts and banding a highlight between them.
-   For the handful of umbrella entries with no origin/insertion text
-   (core, neckMuscles, shoulders, upperBack, hips), it just highlights
-   the general area instead of pinning O/I points that don't exist.
-   Deliberately a stylized schematic -- capsule-shaped "bones" and
-   round joints, not a realistic trace -- so it stays simple, clear
-   and consistent across all 35 muscles rather than attempting
-   textbook-grade anatomical art. Coordinates are per-region viewBoxes.
+   the relevant region (leg, arm, or torso) -- ribs, spine (drawn as
+   stacked vertebra segments), pelvis, scapulae etc all labeled -- with
+   the muscle's origin (square) and insertion (dot) pinned on it and a
+   caption naming the actual bony landmark each one sits on, plus a
+   highlighted band between them. For the handful of umbrella entries
+   with no origin/insertion text (core, neckMuscles, shoulders,
+   upperBack, hips), it just highlights the general area instead of
+   pinning O/I points that don't exist.
+   Deliberately a stylized schematic -- capsule "bones", simple
+   polygons for pelvis/scapula, a dashed column for the spine -- not a
+   realistic trace, so it stays legible and consistent across all 35
+   muscles rather than attempting textbook-grade anatomical art.
+   Coordinates are per-region viewBoxes.
 --------------------------------------------------------------------- */
 const BONE_REGIONS = {
   leg: {
     viewBox: "0 0 140 300",
+    pelvisPoly: "30,10 46,8 60,16 78,16 92,8 108,10 104,26 88,32 70,34 52,32 36,26",
     bones: [
-      { tag: "line", attrs: { x1: "34", y1: "20", x2: "90", y2: "20" } },
-      { tag: "line", attrs: { x1: "62", y1: "30", x2: "60", y2: "185" } },
-      { tag: "line", attrs: { x1: "61", y1: "200", x2: "60", y2: "278" } },
-      { tag: "line", attrs: { x1: "60", y1: "286", x2: "95", y2: "286" } },
+      { tag: "line", attrs: { x1: "60", y1: "32", x2: "58", y2: "185" } },
+      { tag: "line", attrs: { x1: "60", y1: "200", x2: "56", y2: "278" } },
+      { tag: "line", attrs: { x1: "72", y1: "204", x2: "70", y2: "272" } },
     ],
-    joints: [
-      { cx: 62, cy: 28, r: 8 },
-      { cx: 61, cy: 192, r: 8 },
-      { cx: 61, cy: 282, r: 6 },
+    ticks: [
+      { tag: "line", attrs: { x1: "48", y1: "188", x2: "70", y2: "188" } },
+      { tag: "line", attrs: { x1: "50", y1: "280", x2: "76", y2: "280" } },
     ],
+    footPath: "M61,286 C56,292 46,296 34,297",
+    toes: [{ x1: 34, y1: 297, x2: 24, y2: 294 }, { x1: 38, y1: 298, x2: 28, y2: 300 }, { x1: 42, y1: 298, x2: 34, y2: 303 }],
+    joints: [{ cx: 60, cy: 28, r: 7 }, { cx: 59, cy: 192, r: 7 }, { cx: 61, cy: 282, r: 5.5 }],
+    labels: [{ x: 20, y: 6, text: "Pelvis" }, { x: 4, y: 120, text: "Femur" }, { x: 76, y: 240, text: "Tibia /" }, { x: 76, y: 250, text: "fibula" }],
   },
   arm: {
     viewBox: "0 0 140 300",
+    scapulaPoly: "72,14 88,20 90,38 82,50 70,44 66,26",
     bones: [
-      { tag: "line", attrs: { x1: "35", y1: "22", x2: "72", y2: "16" } },
-      { tag: "line", attrs: { x1: "72", y1: "16", x2: "85", y2: "46" } },
-      { tag: "line", attrs: { x1: "80", y1: "52", x2: "75", y2: "165" } },
-      { tag: "line", attrs: { x1: "78", y1: "178", x2: "83", y2: "252" } },
-      { tag: "line", attrs: { x1: "70", y1: "178", x2: "67", y2: "252" } },
-      { tag: "line", attrs: { x1: "70", y1: "260", x2: "88", y2: "266" } },
+      { tag: "line", attrs: { x1: "33", y1: "20", x2: "72", y2: "14" } },
+      { tag: "line", attrs: { x1: "80", y1: "52", x2: "74", y2: "165" } },
+      { tag: "line", attrs: { x1: "78", y1: "178", x2: "83", y2: "248" } },
+      { tag: "line", attrs: { x1: "70", y1: "178", x2: "66", y2: "248" } },
     ],
-    joints: [
-      { cx: 80, cy: 50, r: 8 },
-      { cx: 74, cy: 171, r: 7 },
-      { cx: 75, cy: 256, r: 6 },
+    ticks: [
+      { tag: "line", attrs: { x1: "64", y1: "170", x2: "86", y2: "170" } },
     ],
+    handPath: "M70,258 C68,264 68,270 72,274",
+    fingers: [{ x1: 72, y1: 274, x2: 70, y2: 286 }, { x1: 76, y1: 273, x2: 77, y2: 287 }, { x1: 81, y1: 270, x2: 85, y2: 282 }, { x1: 85, y1: 264, x2: 92, y2: 272 }],
+    joints: [{ cx: 80, cy: 50, r: 7 }, { cx: 74, cy: 172, r: 6.5 }, { cx: 75, cy: 252, r: 5.5 }],
+    labels: [{ x: 14, y: 10, text: "Clavicle" }, { x: 92, y: 34, text: "Scapula" }, { x: 14, y: 110, text: "Humerus" }, { x: 4, y: 215, text: "Radius /" }, { x: 4, y: 225, text: "ulna" }],
   },
   torso: {
     viewBox: "0 0 200 260",
+    pelvisPoly: "58,168 142,168 132,190 100,208 68,190",
+    scapulaPolyLeft: "66,42 86,50 78,72",
+    scapulaPolyRight: "134,42 114,50 122,72",
     bones: [
       { tag: "line", attrs: { x1: "100", y1: "8", x2: "100", y2: "34" } },
-      { tag: "path", attrs: { d: "M100,34 C74,38 62,56 62,78 C62,100 66,120 72,136", fill: "none" } },
-      { tag: "path", attrs: { d: "M100,34 C126,38 138,56 138,78 C138,100 134,120 128,136", fill: "none" } },
-      { tag: "line", attrs: { x1: "100", y1: "34", x2: "100", y2: "204" } },
       { tag: "line", attrs: { x1: "100", y1: "42", x2: "100", y2: "106" } },
       { tag: "line", attrs: { x1: "70", y1: "40", x2: "97", y2: "30" } },
       { tag: "line", attrs: { x1: "130", y1: "40", x2: "103", y2: "30" } },
-      { tag: "line", attrs: { x1: "70", y1: "42", x2: "84", y2: "70" } },
-      { tag: "line", attrs: { x1: "130", y1: "42", x2: "116", y2: "70" } },
       { tag: "line", attrs: { x1: "80", y1: "50", x2: "62", y2: "92" } },
       { tag: "line", attrs: { x1: "120", y1: "50", x2: "138", y2: "92" } },
-      { tag: "line", attrs: { x1: "62", y1: "168", x2: "138", y2: "168" } },
-      { tag: "line", attrs: { x1: "70", y1: "168", x2: "100", y2: "206" } },
-      { tag: "line", attrs: { x1: "130", y1: "168", x2: "100", y2: "206" } },
     ],
-    joints: [
-      { cx: 80, cy: 50, r: 6 },
-      { cx: 120, cy: 50, r: 6 },
-    ],
+    ribcageCurves: ["M100,34 C74,38 62,56 62,78 C62,100 66,120 72,136", "M100,34 C126,38 138,56 138,78 C138,100 134,120 128,136"],
+    ribLines: ["M100,46 C86,48 76,56 72,66", "M100,46 C114,48 124,56 128,66", "M100,60 C84,62 72,70 68,82", "M100,60 C116,62 128,70 132,82", "M100,76 C84,78 72,86 68,98", "M100,76 C116,78 128,86 132,98", "M100,92 C86,94 76,102 72,112", "M100,92 C114,94 124,102 128,112"],
+    vertebrae: [{ x: 97, y: 34, w: 6, h: 7 }, { x: 97, y: 43, w: 6, h: 7 }, { x: 97, y: 52, w: 6, h: 7 }, { x: 97, y: 61, w: 6, h: 7 }, { x: 97, y: 70, w: 6, h: 7 }, { x: 97, y: 79, w: 6, h: 7 }, { x: 97, y: 88, w: 6, h: 7 }, { x: 97, y: 97, w: 6, h: 7 }, { x: 97, y: 106, w: 6, h: 7 }, { x: 97, y: 115, w: 6, h: 7 }, { x: 96.5, y: 124, w: 7, h: 8 }, { x: 96.5, y: 134, w: 7, h: 8 }, { x: 96, y: 144, w: 8, h: 9 }, { x: 96, y: 154, w: 8, h: 9 }, { x: 95.5, y: 164, w: 9, h: 10 }],
+    joints: [{ cx: 80, cy: 50, r: 5.5 }, { cx: 120, cy: 50, r: 5.5 }],
+    labels: [{ x: 8, y: 90, text: "Ribs" }, { x: 104, y: 92, text: "Spine" }, { x: 80, y: 24, text: "Clavicle" }, { x: 44, y: 182, text: "Pelvis" }, { x: 42, y: 66, text: "Scapula" }],
   },
 };
 
 const MUSCLE_JOINT_DIAGRAMS = {
-  quadriceps: { region: "leg", origin: { x: 50, y: 22 }, insertion: { x: 61, y: 206 } },
-  hamstrings: { region: "leg", origin: { x: 75, y: 24 }, insertion: { x: 72, y: 204 } },
-  gluteusMax: { region: "leg", origin: { x: 40, y: 18 }, insertion: { x: 58, y: 90 } },
-  gluteusMed: { region: "leg", origin: { x: 45, y: 16 }, insertion: { x: 63, y: 45 } },
-  gluteusMin: { region: "leg", origin: { x: 48, y: 17 }, insertion: { x: 64, y: 42 } },
-  adductors: { region: "leg", origin: { x: 65, y: 24 }, insertion: { x: 58, y: 140 } },
-  hipFlexors: { region: "leg", origin: { x: 55, y: 15 }, insertion: { x: 66, y: 50 } },
-  calves: { region: "leg", origin: { x: 61, y: 190 }, insertion: { x: 75, y: 286 } },
-  tibialisAnterior: { region: "leg", origin: { x: 66, y: 205 }, insertion: { x: 65, y: 288 } },
-  tfl: { region: "leg", origin: { x: 38, y: 17 }, insertion: { x: 72, y: 110 } },
-  deepHipRotators: { region: "leg", origin: { x: 70, y: 20 }, insertion: { x: 64, y: 44 } },
+  quadriceps: { region: "leg", origin: { x: 50, y: 22, label: "AIIS (pelvis)" }, insertion: { x: 61, y: 206, label: "Tibial tuberosity" } },
+  hamstrings: { region: "leg", origin: { x: 75, y: 24, label: "Ischial tuberosity" }, insertion: { x: 72, y: 204, label: "Tibia / fibula head" } },
+  gluteusMax: { region: "leg", origin: { x: 40, y: 18, label: "Posterior ilium/sacrum" }, insertion: { x: 58, y: 90, label: "IT band / femur" } },
+  gluteusMed: { region: "leg", origin: { x: 45, y: 16, label: "Outer ilium" }, insertion: { x: 63, y: 45, label: "Greater trochanter" } },
+  gluteusMin: { region: "leg", origin: { x: 48, y: 17, label: "Outer ilium (deep)" }, insertion: { x: 64, y: 42, label: "Greater trochanter" } },
+  adductors: { region: "leg", origin: { x: 65, y: 24, label: "Pubis" }, insertion: { x: 58, y: 140, label: "Femur (linea aspera)" } },
+  hipFlexors: { region: "leg", origin: { x: 55, y: 15, label: "Lumbar spine / ilium" }, insertion: { x: 66, y: 50, label: "Lesser trochanter" } },
+  calves: { region: "leg", origin: { x: 61, y: 190, label: "Femoral condyles" }, insertion: { x: 75, y: 286, label: "Calcaneus (Achilles)" } },
+  tibialisAnterior: { region: "leg", origin: { x: 66, y: 205, label: "Lateral tibia" }, insertion: { x: 65, y: 288, label: "1st metatarsal" } },
+  tfl: { region: "leg", origin: { x: 38, y: 17, label: "ASIS" }, insertion: { x: 72, y: 110, label: "IT band" } },
+  deepHipRotators: { region: "leg", origin: { x: 70, y: 20, label: "Sacrum" }, insertion: { x: 64, y: 44, label: "Greater trochanter" } },
   hips: { region: "leg", highlight: { cx: 61, cy: 62, rx: 30, ry: 48 } },
-  anteriorDeltoid: { region: "arm", origin: { x: 50, y: 19 }, insertion: { x: 77, y: 110 } },
-  lateralDeltoid: { region: "arm", origin: { x: 80, y: 20 }, insertion: { x: 76, y: 108 } },
-  posteriorDeltoid: { region: "arm", origin: { x: 83, y: 35 }, insertion: { x: 75, y: 106 } },
-  rotatorCuff: { region: "arm", origin: { x: 83, y: 30 }, insertion: { x: 79, y: 58 } },
-  bicepsBrachii: { region: "arm", origin: { x: 78, y: 20 }, insertion: { x: 81, y: 180 } },
-  tricepsBrachii: { region: "arm", origin: { x: 83, y: 40 }, insertion: { x: 69, y: 175 } },
-  brachialis: { region: "arm", origin: { x: 76, y: 140 }, insertion: { x: 69, y: 182 } },
-  brachioradialis: { region: "arm", origin: { x: 79, y: 150 }, insertion: { x: 83, y: 248 } },
-  forearms: { region: "arm", origin: { x: 75, y: 168 }, insertion: { x: 75, y: 262 } },
-  rectusAbdominis: { region: "torso", origin: { x: 100, y: 198 }, insertion: { x: 100, y: 92 } },
-  obliques: { region: "torso", origin: { x: 68, y: 122 }, insertion: { x: 76, y: 172 } },
-  transverseAbdominis: { region: "torso", origin: { x: 64, y: 148 }, insertion: { x: 100, y: 148 } },
+  anteriorDeltoid: { region: "arm", origin: { x: 50, y: 19, label: "Clavicle" }, insertion: { x: 77, y: 110, label: "Deltoid tuberosity" } },
+  lateralDeltoid: { region: "arm", origin: { x: 80, y: 20, label: "Acromion" }, insertion: { x: 76, y: 108, label: "Deltoid tuberosity" } },
+  posteriorDeltoid: { region: "arm", origin: { x: 83, y: 35, label: "Scapular spine" }, insertion: { x: 75, y: 106, label: "Deltoid tuberosity" } },
+  rotatorCuff: { region: "arm", origin: { x: 83, y: 30, label: "Scapula" }, insertion: { x: 79, y: 58, label: "Humeral head" } },
+  bicepsBrachii: { region: "arm", origin: { x: 78, y: 20, label: "Scapula" }, insertion: { x: 81, y: 180, label: "Radial tuberosity" } },
+  tricepsBrachii: { region: "arm", origin: { x: 83, y: 40, label: "Scapula / humerus" }, insertion: { x: 69, y: 175, label: "Olecranon (ulna)" } },
+  brachialis: { region: "arm", origin: { x: 76, y: 140, label: "Distal humerus" }, insertion: { x: 69, y: 182, label: "Ulna (coronoid)" } },
+  brachioradialis: { region: "arm", origin: { x: 79, y: 150, label: "Distal humerus" }, insertion: { x: 83, y: 248, label: "Radius (styloid)" } },
+  forearms: { region: "arm", origin: { x: 75, y: 168, label: "Elbow (epicondyles)" }, insertion: { x: 75, y: 262, label: "Wrist / hand" } },
+  rectusAbdominis: { region: "torso", origin: { x: 100, y: 198, label: "Pubic crest" }, insertion: { x: 100, y: 92, label: "Ribs 5-7 / xiphoid" } },
+  obliques: { region: "torso", origin: { x: 68, y: 122, label: "Lower ribs" }, insertion: { x: 76, y: 172, label: "Iliac crest" } },
+  transverseAbdominis: { region: "torso", origin: { x: 64, y: 148, label: "Ribs / iliac crest" }, insertion: { x: 100, y: 148, label: "Linea alba" } },
   core: { region: "torso", highlight: { cx: 100, cy: 140, rx: 34, ry: 56 } },
-  erectorSpinae: { region: "torso", origin: { x: 92, y: 188 }, insertion: { x: 92, y: 50 } },
-  quadratusLumborum: { region: "torso", origin: { x: 68, y: 165 }, insertion: { x: 70, y: 136 } },
-  latissimusDorsi: { region: "torso", origin: { x: 100, y: 175 }, insertion: { x: 62, y: 90 } },
-  trapezius: { region: "torso", origin: { x: 100, y: 50 }, insertion: { x: 84, y: 68 } },
-  rhomboids: { region: "torso", origin: { x: 100, y: 60 }, insertion: { x: 82, y: 68 } },
-  levatorScapulae: { region: "torso", origin: { x: 100, y: 20 }, insertion: { x: 72, y: 44 } },
+  erectorSpinae: { region: "torso", origin: { x: 88, y: 188, label: "Sacrum / ilium" }, insertion: { x: 88, y: 50, label: "Ribs / spine" } },
+  quadratusLumborum: { region: "torso", origin: { x: 68, y: 165, label: "Iliac crest" }, insertion: { x: 70, y: 136, label: "12th rib / spine" } },
+  latissimusDorsi: { region: "torso", origin: { x: 100, y: 175, label: "Spine / pelvis" }, insertion: { x: 62, y: 90, label: "Humerus" } },
+  trapezius: { region: "torso", origin: { x: 100, y: 50, label: "Spine / skull base" }, insertion: { x: 84, y: 68, label: "Scapula / clavicle" } },
+  rhomboids: { region: "torso", origin: { x: 100, y: 60, label: "Thoracic spine" }, insertion: { x: 82, y: 68, label: "Scapula (medial)" } },
+  levatorScapulae: { region: "torso", origin: { x: 100, y: 20, label: "Cervical spine" }, insertion: { x: 72, y: 44, label: "Scapula (superior)" } },
   upperBack: { region: "torso", highlight: { cx: 100, cy: 55, rx: 44, ry: 32 } },
   neckMuscles: { region: "torso", highlight: { cx: 100, cy: 20, rx: 18, ry: 16 } },
-  pectoralis: { region: "torso", origin: { x: 100, y: 55 }, insertion: { x: 63, y: 90 } },
+  pectoralis: { region: "torso", origin: { x: 100, y: 55, label: "Sternum / clavicle" }, insertion: { x: 63, y: 90, label: "Humerus" } },
   shoulders: { region: "torso", highlight: { cx: 100, cy: 50, rx: 46, ry: 16 } },
 };
+
+function svgEl(tag, attrs){
+  const svgns = "http://www.w3.org/2000/svg";
+  const el = document.createElementNS(svgns, tag);
+  Object.entries(attrs || {}).forEach(([k, v]) => el.setAttribute(k, v));
+  return el;
+}
 
 function buildMuscleDiagramSVG(key){
   const d = MUSCLE_JOINT_DIAGRAMS[key];
   if(!d) return null;
   const region = BONE_REGIONS[d.region];
   if(!region) return null;
-  const svgns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(svgns, "svg");
-  svg.setAttribute("viewBox", region.viewBox);
-  svg.setAttribute("aria-hidden", "true");
+  const svg = svgEl("svg", { viewBox: region.viewBox, "aria-hidden": "true" });
+
+  // Filled polygons (pelvis wing, scapula blades) get a faint fill so they
+  // read as solid bone shapes rather than just outlines.
+  const fillsG = svgEl("g", { fill: "var(--ink-dim)", "fill-opacity": "0.14", stroke: "none" });
+  if(region.pelvisPoly) fillsG.appendChild(svgEl("polygon", { points: region.pelvisPoly }));
+  if(region.scapulaPoly) fillsG.appendChild(svgEl("polygon", { points: region.scapulaPoly }));
+  if(region.scapulaPolyLeft){
+    fillsG.appendChild(svgEl("polygon", { points: region.scapulaPolyLeft }));
+    fillsG.appendChild(svgEl("polygon", { points: region.scapulaPolyRight }));
+  }
+  svg.appendChild(fillsG);
 
   // Bones are drawn twice -- a thick soft-opacity pass for the "capsule"
-  // body shape, then a thin crisp pass on top for a clean edge -- both
-  // using the same coordinates, which is simpler and more reliable than
-  // trying to hand-trace realistic bone silhouettes.
-  const boneSoft = document.createElementNS(svgns, "g");
-  boneSoft.setAttribute("fill", "none");
-  boneSoft.setAttribute("stroke", "var(--ink-dim)");
-  boneSoft.setAttribute("stroke-width", "13");
-  boneSoft.setAttribute("stroke-linecap", "round");
-  boneSoft.setAttribute("stroke-linejoin", "round");
-  boneSoft.setAttribute("opacity", "0.35");
-  const boneCrisp = document.createElementNS(svgns, "g");
-  boneCrisp.setAttribute("fill", "none");
-  boneCrisp.setAttribute("stroke", "var(--ink-dim)");
-  boneCrisp.setAttribute("stroke-width", "1.4");
-  boneCrisp.setAttribute("stroke-linecap", "round");
-  boneCrisp.setAttribute("stroke-linejoin", "round");
-  boneCrisp.setAttribute("opacity", "0.6");
+  // body shape, then a thin crisp pass on top for a clean edge (plus the
+  // pelvis/scapula outlines and any extra detail lines) -- simpler and more
+  // reliable than trying to hand-trace realistic bone silhouettes.
+  const boneSoft = svgEl("g", { fill: "none", stroke: "var(--ink-dim)", "stroke-width": "12", "stroke-linecap": "round", "stroke-linejoin": "round", opacity: "0.32" });
+  const boneCrisp = svgEl("g", { fill: "none", stroke: "var(--ink-dim)", "stroke-width": "1.3", "stroke-linecap": "round", "stroke-linejoin": "round", opacity: "0.6" });
+  if(region.pelvisPoly){
+    boneSoft.appendChild(svgEl("polygon", { points: region.pelvisPoly }));
+    boneCrisp.appendChild(svgEl("polygon", { points: region.pelvisPoly }));
+  }
+  if(region.scapulaPoly) boneCrisp.appendChild(svgEl("polygon", { points: region.scapulaPoly }));
+  if(region.scapulaPolyLeft){
+    boneCrisp.appendChild(svgEl("polygon", { points: region.scapulaPolyLeft }));
+    boneCrisp.appendChild(svgEl("polygon", { points: region.scapulaPolyRight }));
+  }
   region.bones.forEach(b => {
-    [boneSoft, boneCrisp].forEach(g => {
-      const el = document.createElementNS(svgns, b.tag);
-      Object.entries(b.attrs).forEach(([k, v]) => el.setAttribute(k, v));
-      g.appendChild(el);
-    });
+    boneSoft.appendChild(svgEl(b.tag, b.attrs));
+    boneCrisp.appendChild(svgEl(b.tag, b.attrs));
   });
+  if(region.ribcageCurves){
+    region.ribcageCurves.forEach(dPath => {
+      boneSoft.appendChild(svgEl("path", { d: dPath, fill: "none" }));
+      boneCrisp.appendChild(svgEl("path", { d: dPath, fill: "none" }));
+    });
+    region.ribLines.forEach(dPath => boneCrisp.appendChild(svgEl("path", { d: dPath, fill: "none", "stroke-width": "1" })));
+  }
+  if(region.ticks) region.ticks.forEach(t => boneCrisp.appendChild(svgEl(t.tag, t.attrs)));
+  if(region.footPath){
+    boneSoft.appendChild(svgEl("path", { d: region.footPath }));
+    boneCrisp.appendChild(svgEl("path", { d: region.footPath }));
+    region.toes.forEach(t => boneCrisp.appendChild(svgEl("line", t)));
+  }
+  if(region.handPath){
+    boneSoft.appendChild(svgEl("path", { d: region.handPath }));
+    boneCrisp.appendChild(svgEl("path", { d: region.handPath }));
+    region.fingers.forEach(t => boneCrisp.appendChild(svgEl("line", t)));
+  }
   svg.appendChild(boneSoft);
   svg.appendChild(boneCrisp);
 
-  const jointsG = document.createElementNS(svgns, "g");
-  jointsG.setAttribute("fill", "var(--surface-2)");
-  jointsG.setAttribute("stroke", "var(--ink-dim)");
-  jointsG.setAttribute("stroke-width", "2");
-  jointsG.setAttribute("opacity", "0.9");
-  region.joints.forEach(j => {
-    const el = document.createElementNS(svgns, "circle");
-    el.setAttribute("cx", j.cx); el.setAttribute("cy", j.cy); el.setAttribute("r", j.r);
-    jointsG.appendChild(el);
-  });
+  // Spine drawn as stacked vertebra segments rather than one line.
+  if(region.vertebrae){
+    const vertG = svgEl("g", { fill: "var(--ink-dim)", opacity: "0.28" });
+    region.vertebrae.forEach(v => vertG.appendChild(svgEl("rect", { x: v.x, y: v.y, width: v.w, height: v.h, rx: 1.5 })));
+    svg.appendChild(vertG);
+  }
+
+  const jointsG = svgEl("g", { fill: "var(--surface-2)", stroke: "var(--ink-dim)", "stroke-width": "1.8", opacity: "0.9" });
+  region.joints.forEach(j => jointsG.appendChild(svgEl("circle", { cx: j.cx, cy: j.cy, r: j.r })));
   svg.appendChild(jointsG);
+
+  const labelsG = svgEl("g", { class: "anatomydiagrambonelabel" });
+  region.labels.forEach(l => {
+    const t = svgEl("text", { x: l.x, y: l.y });
+    t.textContent = l.text;
+    labelsG.appendChild(t);
+  });
+  svg.appendChild(labelsG);
 
   if(d.highlight){
     // Umbrella entry (no origin/insertion text) -- just highlight the area.
     const h = d.highlight;
-    const el = document.createElementNS(svgns, "ellipse");
-    el.setAttribute("cx", h.cx); el.setAttribute("cy", h.cy);
-    el.setAttribute("rx", h.rx); el.setAttribute("ry", h.ry);
-    el.setAttribute("fill", "var(--accent)"); el.setAttribute("fill-opacity", "0.3");
-    el.setAttribute("stroke", "var(--accent)"); el.setAttribute("stroke-opacity", "0.6"); el.setAttribute("stroke-width", "1.5");
-    svg.appendChild(el);
+    svg.appendChild(svgEl("ellipse", {
+      cx: h.cx, cy: h.cy, rx: h.rx, ry: h.ry,
+      fill: "var(--accent)", "fill-opacity": "0.28",
+      stroke: "var(--accent)", "stroke-opacity": "0.55", "stroke-width": "1.5",
+    }));
   } else {
     // A specific muscle -- band the belly between origin and insertion, then
     // mark each end distinctly (square = origin, dot = insertion) so the
-    // Origin/Insertion fields above have something to point at visually.
+    // caption below has something to point at visually.
     const o = d.origin, i = d.insertion;
-    const belly = document.createElementNS(svgns, "line");
-    belly.setAttribute("x1", o.x); belly.setAttribute("y1", o.y);
-    belly.setAttribute("x2", i.x); belly.setAttribute("y2", i.y);
-    belly.setAttribute("stroke", "var(--accent)"); belly.setAttribute("stroke-opacity", "0.45");
-    belly.setAttribute("stroke-width", "8"); belly.setAttribute("stroke-linecap", "round");
-    svg.appendChild(belly);
-
-    const originMark = document.createElementNS(svgns, "rect");
-    originMark.setAttribute("x", o.x - 4); originMark.setAttribute("y", o.y - 4);
-    originMark.setAttribute("width", 8); originMark.setAttribute("height", 8);
-    originMark.setAttribute("fill", "var(--accent2)"); originMark.setAttribute("stroke", "var(--ink)"); originMark.setAttribute("stroke-width", "1");
-    svg.appendChild(originMark);
-
-    const insertMark = document.createElementNS(svgns, "circle");
-    insertMark.setAttribute("cx", i.x); insertMark.setAttribute("cy", i.y); insertMark.setAttribute("r", 4.5);
-    insertMark.setAttribute("fill", "var(--accent)"); insertMark.setAttribute("stroke", "var(--ink)"); insertMark.setAttribute("stroke-width", "1");
-    svg.appendChild(insertMark);
+    svg.appendChild(svgEl("line", {
+      x1: o.x, y1: o.y, x2: i.x, y2: i.y,
+      stroke: "var(--accent)", "stroke-opacity": "0.4", "stroke-width": "7", "stroke-linecap": "round",
+    }));
+    svg.appendChild(svgEl("rect", {
+      x: o.x - 4, y: o.y - 4, width: 8, height: 8,
+      fill: "var(--accent2)", stroke: "var(--ink)", "stroke-width": "1",
+    }));
+    svg.appendChild(svgEl("circle", {
+      cx: i.x, cy: i.y, r: 4.5,
+      fill: "var(--accent)", stroke: "var(--ink)", "stroke-width": "1",
+    }));
   }
 
   return svg;
 }
 
-// Wraps the diagram SVG with a small legend (Origin/Insertion swatches for
-// a specific muscle, nothing for an umbrella entry's plain area highlight)
-// ready to sit at the top of a muscle card. Returns null when this muscle
-// has no diagram data (keeps the card exactly as before rather than
-// leaving a gap).
+// Wraps the diagram SVG with a caption naming the actual bony landmarks for
+// a specific muscle's origin/insertion (nothing for an umbrella entry's
+// plain area highlight, since there's no O/I text for it to name), ready to
+// sit at the top of a muscle card. Returns null when this muscle has no
+// diagram data (keeps the card exactly as before rather than leaving a gap).
 function buildMuscleDiagramWrap(key){
   const svg = buildMuscleDiagramSVG(key);
   if(!svg) return null;
@@ -922,10 +954,13 @@ function buildMuscleDiagramWrap(key){
   wrap.appendChild(svg);
   const d = MUSCLE_JOINT_DIAGRAMS[key];
   if(!d.highlight){
-    const legend = document.createElement("div");
-    legend.className = "anatomydiagramlegend";
-    legend.innerHTML = '<span class="anatomylegendorigin">&#9632;</span> Origin &nbsp; <span class="anatomylegendinsertion">&#9679;</span> Insertion';
-    wrap.appendChild(legend);
+    const caption = document.createElement("div");
+    caption.className = "anatomydiagramcaption";
+    caption.innerHTML = `
+      <div><span class="anatomylegendorigin">&#9632;</span> Origin: ${esc(d.origin.label)}</div>
+      <div><span class="anatomylegendinsertion">&#9679;</span> Insertion: ${esc(d.insertion.label)}</div>
+    `;
+    wrap.appendChild(caption);
   }
   return wrap;
 }
