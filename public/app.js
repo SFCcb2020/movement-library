@@ -329,6 +329,13 @@ function render(){
       render();
       renderRehabQueueBar();
     });
+    // Coach-only reference: what's actually being worked, in plain but
+    // technically accurate terms. Silently omitted when none of this
+    // exercise's mover tags resolve to a known muscle (see resolveMuscleTokens).
+    if(isOwnerFlag){
+      const anatomySection = buildAnatomySection(dg);
+      if(anatomySection) card.appendChild(anatomySection);
+    }
     grid.appendChild(card);
   });
   resultsEl.innerHTML = "";
@@ -378,6 +385,376 @@ function mergeDisplayRows(results){
   });
   groups.sort((a,b) => a.exercise.localeCompare(b.exercise));
   return groups;
+}
+
+/* ---------------------------------------------------------------------
+   Anatomy -- a coach-only "why this muscle, technically" section attached
+   to every Exercise Library card. Rather than writing bespoke anatomy
+   for each of the 378 exercises (which would mean re-describing the same
+   handful of muscles hundreds of times), this keys off the same
+   primary/secondary mover tags each exercise already carries: one entry
+   per real muscle (or small muscle group), shown on every card that lists
+   it. MUSCLE_ALIASES normalizes the many raw tag spellings/variants found
+   in BUILTIN_DATA (e.g. "Glutes", "Glute Max (isometric)") down to one
+   canonical key per entry in MUSCLE_ANATOMY. A tag with no match (a rare
+   one-off spelling) is simply left out of that card's Anatomy section
+   rather than guessed at.
+--------------------------------------------------------------------- */
+const MUSCLE_ANATOMY = {
+  quadriceps: {
+    name: "Quadriceps", aka: "Quads — Rectus Femoris, Vastus Lateralis/Medialis/Intermedius",
+    origin: "Rectus femoris: anterior inferior iliac spine (AIIS). The three vasti: shaft of the femur.",
+    insertion: "Common quadriceps tendon into the patella, then via the patellar tendon onto the tibial tuberosity.",
+    action: "Knee extension; rectus femoris also flexes the hip since it crosses both joints.",
+    nerve: "Femoral nerve (L2–L4)",
+    note: "Rectus femoris is the only head that crosses the hip too — that's why a seated leg extension (hip flexed) and a squat (hip extending) load it differently, even though both extend the knee.",
+  },
+  hamstrings: {
+    name: "Hamstrings", aka: "Biceps Femoris, Semitendinosus, Semimembranosus",
+    origin: "Ischial tuberosity (long head of biceps femoris, semitendinosus, semimembranosus); the short head of biceps femoris starts lower, on the femur itself.",
+    insertion: "Biceps femoris: head of the fibula. Semitendinosus/semimembranosus: medial tibia.",
+    action: "Knee flexion and hip extension (the short head of biceps femoris only crosses the knee, not the hip).",
+    nerve: "Sciatic nerve — tibial division mostly, short head of biceps femoris via the peroneal division (L5–S2)",
+    note: "Being a two-joint muscle at both the hip and knee (bar the short head) is why hamstring training splits into hip-dominant work (RDLs, hip thrusts) and knee-dominant work (leg curls) — both are needed for full development.",
+  },
+  gluteusMax: {
+    name: "Gluteus Maximus", aka: "Glutes (primary)",
+    origin: "Posterior ilium, sacrum, coccyx, and the sacrotuberous ligament",
+    insertion: "Iliotibial band and the gluteal tuberosity of the femur",
+    action: "Hip extension and external rotation; upper fibers assist abduction too — the main driver of hip-hinge and squat lockout",
+    nerve: "Inferior gluteal nerve (L5–S2)",
+    note: "The biggest, strongest hip extensor in the body, but most of its output shows up in the last 30° of hip extension — train it through a genuinely deep range rather than just lockouts.",
+  },
+  gluteusMed: {
+    name: "Gluteus Medius", aka: "Glute Med",
+    origin: "Outer surface of the ilium, between the anterior and posterior gluteal lines",
+    insertion: "Lateral surface of the greater trochanter of the femur",
+    action: "Hip abduction; anterior fibers assist internal rotation, posterior fibers assist external rotation — the key single-leg pelvis stabiliser",
+    nerve: "Superior gluteal nerve (L4–S1)",
+    note: "This is the muscle that fails first in a Trendelenburg sign (the pelvis dropping on the swing-leg side during single-leg stance) — band walks and single-leg work target it directly for that reason.",
+  },
+  gluteusMin: {
+    name: "Gluteus Minimus", aka: "Glute Min",
+    origin: "Outer surface of the ilium, just below gluteus medius",
+    insertion: "Anterior surface of the greater trochanter",
+    action: "Hip abduction and assists internal rotation, working alongside glute medius as a pelvis stabiliser",
+    nerve: "Superior gluteal nerve (L4–S1)",
+    note: "Smaller and deeper than glute medius, so it's rarely trained in true isolation — almost everything that targets glute medius trains this alongside it.",
+  },
+  adductors: {
+    name: "Adductors", aka: "Adductor Longus/Brevis/Magnus, Gracilis, Pectineus",
+    origin: "Pubic bone (all of them); adductor magnus also arises from the ischial tuberosity",
+    insertion: "Along the linea aspera of the femur — adductor magnus also reaches the adductor tubercle near the knee",
+    action: "Hip adduction; the posterior fibers of adductor magnus also assist hip extension",
+    nerve: "Obturator nerve (mostly); adductor magnus's posterior head via the sciatic nerve",
+    note: "Adductor magnus is actually one of the biggest hip extensors in the body, not just a groin muscle — that's why sumo-stance deadlifts and wide-stance squats load it so heavily.",
+  },
+  hipFlexors: {
+    name: "Hip Flexors", aka: "Iliopsoas — Psoas Major + Iliacus",
+    origin: "Psoas major: sides of the lumbar vertebrae (T12–L5). Iliacus: inner surface of the ilium.",
+    insertion: "Both join to insert on the lesser trochanter of the femur",
+    action: "Hip flexion; psoas major also has a role in lumbar spine stability",
+    nerve: "Femoral nerve and direct lumbar plexus branches (L1–L3)",
+    note: "Because psoas attaches directly onto the lumbar spine, tight or overactive hip flexors are commonly linked to anterior pelvic tilt and lower back discomfort — mobility work here often matters as much as strengthening it.",
+  },
+  calves: {
+    name: "Calves", aka: "Gastrocnemius + Soleus",
+    origin: "Gastrocnemius: two heads from the back of the femur, above the knee. Soleus: back of the tibia and fibula, below the knee.",
+    insertion: "Both merge into the Achilles tendon onto the calcaneus (heel bone)",
+    action: "Plantarflexion (pointing the foot down); gastrocnemius also assists knee flexion since it crosses the knee",
+    nerve: "Tibial nerve (S1–S2)",
+    note: "Gastrocnemius crosses the knee and soleus doesn't — that's why straight-leg calf raises bias gastrocnemius and bent-knee (seated) calf raises isolate soleus.",
+  },
+  tibialisAnterior: {
+    name: "Tibialis Anterior", aka: "Ankle Dorsiflexors",
+    origin: "Lateral condyle and upper shaft of the tibia",
+    insertion: "Medial cuneiform and base of the first metatarsal, underneath the foot",
+    action: "Dorsiflexion (lifting the foot/toes up) and inversion of the foot",
+    nerve: "Deep peroneal nerve (L4–L5)",
+    note: "Often the weak link behind shin splints — it works eccentrically on every foot-strike to lower the foot under control, so it fatigues fast in runners who've never trained it directly.",
+  },
+  erectorSpinae: {
+    name: "Erector Spinae", aka: "Spinal Erectors, Lower Back",
+    origin: "Broad origin off the sacrum, iliac crest and lumbar/thoracic spinous processes, splitting into iliocostalis, longissimus and spinalis columns running upward",
+    insertion: "Ribs, and the transverse/spinous processes of vertebrae, up to the skull in places",
+    action: "Spinal extension, and (unilaterally) lateral flexion — keeps the spine from rounding under load",
+    nerve: "Dorsal rami of the spinal nerves at each level",
+    note: "This is the muscle group keeping the back from rounding in a deadlift or good morning — it's usually working isometrically to resist motion, far more than it's actually moving through a big range.",
+  },
+  quadratusLumborum: {
+    name: "Quadratus Lumborum", aka: "QL",
+    origin: "Iliac crest",
+    insertion: "12th rib and the transverse processes of L1–L4",
+    action: "Lateral flexion of the spine (side-bending) and hip hiking; bilaterally, assists extension and stabilises the low back during breathing",
+    nerve: "T12–L4 branches",
+    note: "Often called the 'quiet' low-back stabiliser — suitcase carries and side planks target it directly because they demand it resist lateral flexion rather than produce it.",
+  },
+  rectusAbdominis: {
+    name: "Rectus Abdominis",
+    origin: "Pubic crest",
+    insertion: "Cartilage of ribs 5–7 and the xiphoid process of the sternum",
+    action: "Spinal flexion (curling the trunk) and posterior pelvic tilt",
+    nerve: "Thoraco-abdominal nerves (T7–T12)",
+    note: "The 'six-pack' muscle — its segmented look comes from tendinous bands running across it, not from separate muscles underneath.",
+  },
+  obliques: {
+    name: "Obliques", aka: "External + Internal Obliques",
+    origin: "External obliques: lower eight ribs. Internal obliques: iliac crest and thoracolumbar fascia.",
+    insertion: "Both weave into the linea alba; external obliques also anchor onto the iliac crest",
+    action: "Trunk rotation and lateral flexion, plus anti-rotation stability — opposite-side external and same-side internal obliques pair up to rotate the trunk the same direction",
+    nerve: "Intercostal and lumbar nerves (T7–L1)",
+    note: "Most rotational power (a golf swing, a thrown pass) is really a two-muscle-pair team effort across both sides of the trunk, not one muscle acting alone.",
+  },
+  transverseAbdominis: {
+    name: "Transverse Abdominis", aka: "TVA, Deep Core",
+    origin: "Iliac crest, thoracolumbar fascia, cartilage of the lower six ribs",
+    insertion: "Linea alba and pubic crest",
+    action: "Compresses the abdominal contents like a corset to stabilise the spine and control intra-abdominal pressure — it doesn't move a joint on its own",
+    nerve: "Intercostal, subcostal and lumbar nerves (T7–L1)",
+    note: "This is the deepest ab muscle, and the one bracing/breathing drills (a dead bug, or bracing under a heavy lift) are specifically training — it doesn't show up as visible 'shape' the way rectus abdominis does.",
+  },
+  core: {
+    name: "Core (as a group)",
+    note: "\"Core\" as a general tag covers the muscles that stabilise the trunk together: Rectus Abdominis, the Obliques and Transverse Abdominis at the front/sides, and the Erector Spinae/Quadratus Lumborum at the back. Check the movement's specific demand (anti-rotation, anti-extension, anti-lateral-flexion) to see which of these is doing the most work.",
+  },
+  latissimusDorsi: {
+    name: "Latissimus Dorsi", aka: "Lats",
+    origin: "Spinous processes of T7–L5, the sacrum, iliac crest, and the lower 3–4 ribs",
+    insertion: "Intertubercular groove of the humerus (upper arm bone)",
+    action: "Shoulder extension, adduction and internal rotation — the main 'pull the arm down and back' muscle",
+    nerve: "Thoracodorsal nerve (C6–C8)",
+    note: "It attaches all the way down to the pelvis, which is why a heavy pull-up or pulldown can be felt bracing through the lower back and obliques too, not just the upper back.",
+  },
+  trapezius: {
+    name: "Trapezius", aka: "Traps — Upper, Mid and Lower fibers",
+    origin: "Base of the skull and the spinous processes of C7–T12",
+    insertion: "Collarbone (clavicle), acromion and spine of the scapula",
+    action: "Upper fibers elevate the scapula (shrug); mid fibers retract it (squeeze the shoulder blades together); lower fibers depress it and rotate it upward",
+    nerve: "Accessory nerve (cranial nerve XI), sensory via C3–C4",
+    note: "One muscle with three very different jobs depending on which fibers are targeted — a shrug trains a completely different third of it than a face pull or a Y-raise does.",
+  },
+  rhomboids: {
+    name: "Rhomboids", aka: "Rhomboid Major + Minor",
+    origin: "Spinous processes of C7–T5",
+    insertion: "Medial border of the scapula",
+    action: "Scapular retraction and downward rotation, working with mid-traps to pull the shoulder blades together",
+    nerve: "Dorsal scapular nerve (C4–C5)",
+    note: "Weak or lengthened rhomboids are a common piece of the 'rounded shoulders' postural picture — rows and face pulls are the direct fix.",
+  },
+  levatorScapulae: {
+    name: "Levator Scapulae",
+    origin: "Transverse processes of C1–C4",
+    insertion: "Superior angle of the scapula",
+    action: "Elevates the scapula and assists downward rotation; also laterally flexes/rotates the neck",
+    nerve: "Dorsal scapular nerve and direct cervical branches (C3–C5)",
+    note: "Sits right at the base of the neck, so it's usually the muscle cramping when someone describes neck/shoulder tension from desk work — shrugs and scapular-elevation work load it directly.",
+  },
+  pectoralis: {
+    name: "Pectoralis Major", aka: "Chest",
+    origin: "Clavicular head: collarbone. Sternal head: sternum and upper rib cartilage.",
+    insertion: "Intertubercular groove of the humerus",
+    action: "Shoulder horizontal adduction and internal rotation; the clavicular head also flexes the shoulder, the sternal head adducts the arm down from overhead",
+    nerve: "Medial and lateral pectoral nerves (C5–T1)",
+    note: "Incline pressing biases the clavicular (upper) fibers and flat/decline pressing biases the sternal (lower) fibers — it's the fiber direction, not just the bench angle, that changes the emphasis.",
+  },
+  anteriorDeltoid: {
+    name: "Anterior Deltoid", aka: "Front Delt",
+    origin: "Lateral third of the clavicle",
+    insertion: "Deltoid tuberosity of the humerus",
+    action: "Shoulder flexion (raising the arm forward) and internal rotation",
+    nerve: "Axillary nerve (C5–C6)",
+    note: "Gets heavily trained as a 'free rider' on every pressing movement (bench, overhead press) — often the best-developed of the three deltoid heads with no direct isolation work at all.",
+  },
+  lateralDeltoid: {
+    name: "Lateral Deltoid", aka: "Side Delt",
+    origin: "Acromion of the scapula",
+    insertion: "Deltoid tuberosity of the humerus",
+    action: "Shoulder abduction (raising the arm out to the side) — the main muscle behind shoulder 'width'",
+    nerve: "Axillary nerve (C5–C6)",
+    note: "Gets very little carryover from pressing, unlike the front delt — lateral raises (or a lean-away cable variation) are usually needed to train it directly.",
+  },
+  posteriorDeltoid: {
+    name: "Posterior Deltoid", aka: "Rear Delt",
+    origin: "Spine of the scapula",
+    insertion: "Deltoid tuberosity of the humerus",
+    action: "Shoulder horizontal abduction and external rotation — pulls the arm backward",
+    nerve: "Axillary nerve (C5–C6)",
+    note: "The most commonly under-trained head relative to the front delt in a pressing-heavy program — face pulls, reverse flyes and rows are the usual fix.",
+  },
+  rotatorCuff: {
+    name: "Rotator Cuff", aka: "Supraspinatus, Infraspinatus, Teres Minor, Subscapularis",
+    origin: "All four originate on the scapula (supraspinatus on top, infraspinatus/teres minor at the back, subscapularis at the front against the ribs)",
+    insertion: "All four insert on the head of the humerus, forming a 'cuff' that holds it centred in the shoulder socket",
+    action: "Supraspinatus initiates abduction; infraspinatus and teres minor externally rotate; subscapularis internally rotates — together they keep the humeral head centred through every arm movement",
+    nerve: "Suprascapular nerve (supraspinatus, infraspinatus), axillary nerve (teres minor), subscapular nerve (subscapularis)",
+    note: "These are stabilisers first and movers second — usually trained with light, controlled work (band external rotations, etc.) rather than heavy loading, since their job is control rather than force production.",
+  },
+  bicepsBrachii: {
+    name: "Biceps Brachii", aka: "Biceps",
+    origin: "Long head: top of the shoulder socket (supraglenoid tubercle). Short head: coracoid process of the scapula.",
+    insertion: "Radial tuberosity of the forearm, plus an attachment into the forearm fascia",
+    action: "Elbow flexion and forearm supination (turning the palm up); the long head also assists shoulder flexion",
+    nerve: "Musculocutaneous nerve (C5–C6)",
+    note: "Supination is actually its strongest individual action — that's why a supinated (underhand) curl generally allows more load than a neutral or pronated grip.",
+  },
+  tricepsBrachii: {
+    name: "Triceps Brachii", aka: "Triceps",
+    origin: "Long head: below the shoulder socket (infraglenoid tubercle) — the only head crossing the shoulder. Lateral and medial heads: back of the humerus.",
+    insertion: "Olecranon of the ulna (the bony point of the elbow)",
+    action: "Elbow extension; the long head also assists shoulder extension",
+    nerve: "Radial nerve (C6–C8)",
+    note: "Because the long head crosses the shoulder, overhead extensions (which stretch it at the shoulder too) tend to bias it more than pushdowns, which keep the shoulder still.",
+  },
+  brachialis: {
+    name: "Brachialis",
+    origin: "Front of the lower half of the humerus",
+    insertion: "Coronoid process of the ulna",
+    action: "Elbow flexion — works regardless of grip (pronated, neutral or supinated), unlike biceps",
+    nerve: "Musculocutaneous nerve (C5–C6)",
+    note: "Sits underneath the biceps and can push it up visually when well developed — hammer curls and reverse curls bias this over the biceps since it doesn't care about forearm rotation.",
+  },
+  brachioradialis: {
+    name: "Brachioradialis",
+    origin: "Lateral supracondylar ridge of the humerus",
+    insertion: "Styloid process of the radius (thumb-side of the wrist)",
+    action: "Elbow flexion — most active in a neutral (hammer) grip, and also helps rotate the forearm back to neutral from either extreme",
+    nerve: "Radial nerve (C5–C6)",
+    note: "Technically a forearm muscle despite crossing the elbow — that's why it responds so well to hammer curls and neutral-grip rows.",
+  },
+  forearms: {
+    name: "Forearm Flexors/Extensors", aka: "Grip",
+    origin: "Flexors: common flexor tendon on the medial epicondyle of the humerus. Extensors: common extensor tendon on the lateral epicondyle.",
+    insertion: "Individual tendons run down to the wrist bones, hand and fingers",
+    action: "Flexors: wrist flexion and grip (finger flexion). Extensors: wrist extension and finger extension.",
+    nerve: "Median and ulnar nerves (flexors); radial nerve (extensors)",
+    note: "Grip fatigue on a pulling exercise is almost always this group giving out before the target back muscle does — straps let you bypass that to keep loading the intended muscle.",
+  },
+  tfl: {
+    name: "Tensor Fasciae Latae", aka: "TFL",
+    origin: "Anterior superior iliac spine (front of the hip bone)",
+    insertion: "Iliotibial (IT) band, which continues down to the tibia below the knee",
+    action: "Hip flexion, abduction and internal rotation; tensions the IT band to help stabilise the knee in stance",
+    nerve: "Superior gluteal nerve (L4–S1)",
+    note: "A common contributor to IT band irritation when it's overworked relative to glute medius — the two share hip-abduction duty, so a weak glute med often means TFL takes on more than its share.",
+  },
+  deepHipRotators: {
+    name: "Deep Hip Rotators", aka: "Piriformis, Gemelli, Obturators, Quadratus Femoris",
+    origin: "Sacrum and ischium (piriformis from the sacrum; the others cluster around the ischium)",
+    insertion: "Greater trochanter of the femur",
+    action: "External rotation of the hip; piriformis also assists abduction when the hip is flexed",
+    nerve: "Direct sacral plexus branches, mostly L5–S2",
+    note: "Piriformis syndrome (sciatic nerve irritation from this muscle) is why clamshells and banded external-rotation work show up so often in return-to-running and low-back rehab programs.",
+  },
+  neckMuscles: {
+    name: "Neck Muscles", aka: "Flexors, Extensors, Lateral Flexors, Rotators",
+    note: "The neck is controlled by several small groups working together: deep flexors and sternocleidomastoid at the front (nodding and rotating), the splenius/semispinalis group at the back (extension), and the scalenes at the side (lateral flexion, plus a role in breathing). Most neck work is best trained through slow, controlled isometric holds rather than heavy dynamic loading.",
+  },
+  shoulders: {
+    name: "Shoulders (as a group)",
+    note: "\"Shoulders\" as a general tag usually means some combination of the three Deltoid heads (Anterior, Lateral, Posterior) plus the Rotator Cuff working to stabilise the joint. Check the exercise's specific plane of movement to see which head is doing the most work.",
+  },
+  upperBack: {
+    name: "Upper Back (as a group)",
+    note: "\"Upper Back\" as a general tag usually points to the Trapezius (especially its mid/lower fibers) and Rhomboids working together to retract and control the shoulder blades — most rowing and pulling-apart movements train this pair as a team.",
+  },
+  hips: {
+    name: "Hips (as a group)",
+    note: "\"Hips\" as a general tag covers the muscles that move and stabilise the hip joint together — most often the Glutes, Hip Flexors and Adductors. Check the movement's specific plane to see which one is the prime mover.",
+  },
+};
+
+const MUSCLE_ALIASES = {
+  "quads": "quadriceps", "rectus femoris": "quadriceps",
+  "hamstrings": "hamstrings",
+  "glute max": "gluteusMax", "glutes": "gluteusMax",
+  "glute med": "gluteusMed",
+  "glute min": "gluteusMin",
+  "adductors": "adductors", "adductor magnus": "adductors",
+  "hip flexors": "hipFlexors",
+  "calves": "calves", "gastrocnemius": "calves", "soleus": "calves",
+  "ankle": "tibialisAnterior", "ankles": "tibialisAnterior",
+  "erector spinae": "erectorSpinae", "spinal erectors": "erectorSpinae", "lower back": "erectorSpinae", "thoracic spine": "erectorSpinae",
+  "quadratus lumborum": "quadratusLumborum",
+  "rectus abdominis": "rectusAbdominis",
+  "obliques": "obliques",
+  "transverse abdominis": "transverseAbdominis", "deep core": "transverseAbdominis",
+  "core": "core",
+  "lats": "latissimusDorsi",
+  "traps": "trapezius", "upper traps": "trapezius", "mid traps": "trapezius", "lower traps": "trapezius",
+  "rhomboids": "rhomboids",
+  "levator scapulae": "levatorScapulae",
+  "chest": "pectoralis", "upper chest": "pectoralis",
+  "anterior delt": "anteriorDeltoid",
+  "lateral delt": "lateralDeltoid",
+  "rear delt": "posteriorDeltoid", "rear delts": "posteriorDeltoid",
+  "rotator cuff": "rotatorCuff", "infraspinatus": "rotatorCuff", "teres minor": "rotatorCuff", "subscapularis": "rotatorCuff",
+  "biceps": "bicepsBrachii",
+  "triceps": "tricepsBrachii",
+  "brachialis": "brachialis",
+  "brachioradialis": "brachioradialis",
+  "forearms": "forearms", "forearm flexors": "forearms", "forearm extensors": "forearms",
+  "tfl": "tfl",
+  "hip rotators": "deepHipRotators", "deep hip rotators": "deepHipRotators",
+  "neck flexors": "neckMuscles", "neck extensors": "neckMuscles", "neck lateral flexors": "neckMuscles", "neck rotators": "neckMuscles",
+  "shoulders": "shoulders",
+  "upper back": "upperBack",
+  "hips": "hips",
+};
+
+// Normalizes a raw primary/secondary field (which may contain several
+// comma/slash-separated muscle names, some with parenthetical qualifiers
+// like "Glute Max (isometric)") down to the list of canonical
+// MUSCLE_ANATOMY keys it refers to. A token with no known alias is simply
+// dropped rather than guessed at -- see the comment above MUSCLE_ANATOMY.
+function resolveMuscleTokens(str){
+  if(!str) return [];
+  const cleaned = String(str).replace(/\([^)]*\)?/g, "").replace(/[()]/g, "");
+  const keys = [];
+  cleaned.split(/[,/]/).map(s => s.trim().toLowerCase()).filter(Boolean).forEach(tok => {
+    const key = MUSCLE_ALIASES[tok];
+    if(key && !keys.includes(key)) keys.push(key);
+  });
+  return keys;
+}
+
+function buildAnatomyMuscleCard(key){
+  const m = MUSCLE_ANATOMY[key];
+  if(!m) return null;
+  const card = document.createElement("div");
+  card.className = "anatomymusclecard";
+  let html = `<h4>${esc(m.name)}</h4>`;
+  if(m.aka) html += `<div class="anatomyaka">${esc(m.aka)}</div>`;
+  if(m.origin) html += `<div class="anatomyfield"><b>Origin</b>${esc(m.origin)}</div>`;
+  if(m.insertion) html += `<div class="anatomyfield"><b>Insertion</b>${esc(m.insertion)}</div>`;
+  if(m.action) html += `<div class="anatomyfield"><b>Action</b>${esc(m.action)}</div>`;
+  if(m.nerve) html += `<div class="anatomyfield"><b>Nerve</b>${esc(m.nerve)}</div>`;
+  html += `<div class="anatomynote">${esc(m.note)}</div>`;
+  card.innerHTML = html;
+  return card;
+}
+
+// Returns a collapsed <details> "Anatomy" section for one exercise card,
+// covering every primary/secondary mover that resolves to a known entry
+// -- or null when none do, so a card with only unrecognised/rare tags
+// just quietly has no Anatomy section rather than an empty one.
+function buildAnatomySection(dg){
+  const keys = [];
+  resolveMuscleTokens(dg.primary).forEach(k => { if(!keys.includes(k)) keys.push(k); });
+  resolveMuscleTokens(dg.secondary).forEach(k => { if(!keys.includes(k)) keys.push(k); });
+  if(!keys.length) return null;
+  const details = document.createElement("details");
+  details.className = "anatomydetails";
+  const summary = document.createElement("summary");
+  summary.textContent = "Anatomy";
+  details.appendChild(summary);
+  const body = document.createElement("div");
+  body.className = "anatomybody";
+  keys.forEach(k => {
+    const muscleCard = buildAnatomyMuscleCard(k);
+    if(muscleCard) body.appendChild(muscleCard);
+  });
+  details.appendChild(body);
+  return details;
 }
 
 // The "Program Queue" strip pinned above the results grid: shows every
@@ -1190,11 +1567,11 @@ function showTab(name){
 // the coach's own bottom nav and the client portal's -- one place to tweak
 // the look of every nav icon rather than duplicating markup per instance.
 const NAV_ICONS = {
-  library: '<line x1="6" y1="12" x2="18" y2="12"/><rect x="3" y="9" width="3" height="6" rx="1"/><rect x="18" y="9" width="3" height="6" rx="1"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="18" y1="10" x2="18" y2="14"/>',
+  library: '<path d="M3 5.5c0-1 .8-1.5 1.7-1.5C7.3 4 9.5 4.6 11 6v13c-1.5-1.2-3.7-1.8-6.3-1.8-1 0-1.7-.6-1.7-1.5V5.5Z"/><path d="M21 5.5c0-1-.8-1.5-1.7-1.5-2.6 0-4.8.6-6.3 2v13c1.5-1.2 3.7-1.8 6.3-1.8 1 0 1.7-.6 1.7-1.5V5.5Z"/>',
   builder: '<rect x="5" y="4" width="14" height="17" rx="2"/><rect x="9" y="2" width="6" height="4" rx="1"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="16" y2="15"/>',
-  rehab: '<path d="M12 20s-7-4.4-9.5-8.6C.8 8.1 1.6 4.6 4.6 3.2c2.3-1 4.8-.2 7.4 3 2.6-3.2 5.1-4 7.4-3 3 1.4 3.8 4.9 2.1 8.2C19 15.6 12 20 12 20z"/>',
-  recovery: '<path d="M12 3c3.5 4.2 6 7.7 6 10.5A6 6 0 0 1 6 13.5C6 10.7 8.5 7.2 12 3z"/>',
-  nutrition: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/>',
+  rehab: '<g transform="rotate(-45 12 12)"><rect x="2" y="8.5" width="20" height="7" rx="3.5"/><rect x="9.5" y="8.5" width="5" height="7"/><circle cx="5.5" cy="12" r="0.7" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="0.7" fill="currentColor" stroke="none"/></g>',
+  recovery: '<path d="M12 21v-8.5"/><path d="M12 12.5c0-3.2-2.2-5.5-5.5-5.5C6.5 10.2 8.8 12.5 12 12.5Z"/><path d="M12 12.5c0-3.2 2.2-5.5 5.5-5.5C17.5 10.2 15.2 12.5 12 12.5Z"/>',
+  nutrition: '<path d="M12 9c-2.8-2.2-6-1-6 2.5C6 15.5 9 20 11 20c.5 0 .7-.3 1-.3s.5.3 1 .3c2 0 5-4.5 5-8.5C18 8 14.8 6.8 12 9Z"/><path d="M12 9V6"/><path d="M12 6c.8-1 1.8-1.3 2.6-1"/>',
   clients: '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.9 2.7-6 6-6s6 2.1 6 6"/><circle cx="17.5" cy="9" r="2.3"/><path d="M15 20c.2-2.8 1.8-4.5 4-4.5s3.6 1.6 4 4.2"/>',
   messages: '<path d="M4 5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/>',
   enquiries: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
