@@ -162,6 +162,35 @@ h1{
 .queuebtn:hover{border-color:var(--select); color:var(--select);}
 .queuebtn.queued{background:var(--select-soft); border-color:var(--select); color:var(--select);}
 
+/* Exercise Library -- "Anatomy" reference (coach-only): what's actually
+   being worked, per muscle, keyed off the card's own Primary/Secondary
+   mover tags. Collapsed by default so cards stay scannable. */
+.anatomydetails{margin-top:12px; padding-top:10px; border-top:1px dashed var(--line);}
+.anatomydetails summary{
+  cursor:pointer; list-style:none; font-weight:600; color:var(--ink-dim);
+  font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+}
+.anatomydetails summary::-webkit-details-marker{display:none;}
+.anatomydetails summary::before{content:"▸ "; font-size:10px;}
+.anatomydetails[open] summary::before{content:"▾ ";}
+.anatomydetails summary:hover{color:var(--ink);}
+.anatomybody{display:flex; flex-direction:column; gap:10px; margin-top:10px;}
+.anatomymusclecard{
+  background:var(--surface-2); border-radius:8px; padding:10px 12px;
+}
+.anatomymusclecard h4{margin:0 0 2px; font-size:13px; font-weight:700; color:var(--ink);}
+.anatomyaka{font-size:11px; font-style:italic; color:var(--ink-dim); margin:0 0 6px;}
+.anatomyfield{font-size:12px; line-height:1.5; color:var(--ink); margin-bottom:5px;}
+.anatomyfield b{
+  font-weight:600; color:var(--ink-dim); font-size:10.5px; text-transform:uppercase;
+  letter-spacing:.05em; display:block; margin-bottom:1px;
+}
+.anatomynote{
+  font-size:12px; line-height:1.5; color:var(--ink); margin-top:6px; padding-top:6px;
+  border-top:1px solid var(--line);
+}
+.anatomynote b{font-weight:600; color:var(--accent);}
+
 /* Recovery Library -- same card/grid/facet look as the Exercise Library,
    plus a small citation list at the bottom of each card instead of the
    queue-to-program buttons (recovery items are never added to a plan). */
